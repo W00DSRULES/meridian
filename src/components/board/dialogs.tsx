@@ -1,6 +1,8 @@
 "use client";
 
 import { useState } from "react";
+import { Trash2 } from "lucide-react";
+import { GlyphMark } from "@/components/board/glyphs";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -17,25 +19,49 @@ import {
   COMMITMENT_META,
   LIMITS,
   PROFICIENCY_META,
+  milestoneCounts,
   normalizeText,
   validateCapability,
+  validateDetail,
   validateIdentity,
+  validateMilestoneName,
 } from "@/lib/board-model";
-import { COMMITMENTS, PROFICIENCIES, type Commitment, type Proficiency } from "@/lib/types";
+import {
+  COMMITMENTS,
+  PROFICIENCIES,
+  type Commitment,
+  type Glyph,
+  type Milestone,
+  type Proficiency,
+} from "@/lib/types";
+
+export type DraftMilestone = {
+  id: string;
+  name: string;
+  done: boolean;
+};
 
 export type CapabilityDraft = {
   title: string;
   description: string;
+  detail: string;
   proficiency: Proficiency;
   commitment: Commitment;
+  milestones: DraftMilestone[];
 };
 
 export const EMPTY_DRAFT: CapabilityDraft = {
   title: "",
   description: "",
+  detail: "",
   proficiency: "neutral",
   commitment: "next",
+  milestones: [],
 };
+
+function freshMilestoneId(): string {
+  return `draft-${crypto.randomUUID()}`;
+}
 
 export function NameDialog({
   open,
@@ -116,51 +142,180 @@ export function CapabilityDialog({
   open,
   mode,
   seed,
+  glyph,
   author,
+  milestones,
   saving,
   error,
   onOpenChange,
   onSubmit,
   onDelete,
+  onAddMilestone,
+  onToggleMilestone,
+  onRenameMilestone,
+  onDeleteMilestone,
 }: {
   open: boolean;
   mode: "create" | "edit";
   seed: CapabilityDraft;
+  glyph: Glyph;
   author: string;
+  milestones: Milestone[];
   saving: boolean;
   error: string | null;
   onOpenChange: (open: boolean) => void;
   onSubmit: (draft: CapabilityDraft) => void;
   onDelete?: () => void;
+  onAddMilestone?: (name: string) => Promise<void>;
+  onToggleMilestone?: (milestone: Milestone) => Promise<void>;
+  onRenameMilestone?: (milestone: Milestone, name: string) => Promise<void>;
+  onDeleteMilestone?: (milestone: Milestone) => Promise<void>;
 }) {
   const [draft, setDraft] = useState<CapabilityDraft>(seed);
   const [localError, setLocalError] = useState<string | null>(null);
+  const [nextName, setNextName] = useState("");
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [nameDrafts, setNameDrafts] = useState<Record<string, string>>({});
+
+  const liveMilestones = mode === "edit" ? milestones : draft.milestones;
+  const counts = milestoneCounts(liveMilestones);
+  const shownError = localError ?? error;
 
   function submit() {
-    const message = validateCapability({ ...draft, author });
+    const message = validateCapability({ ...draft, author }) ?? validateDetail(draft.detail);
     if (message) {
       setLocalError(message);
       return;
+    }
+    const pending = mode === "create" ? draft.milestones : [];
+    for (const milestone of pending) {
+      const nameError = validateMilestoneName(milestone.name);
+      if (nameError) {
+        setLocalError(nameError);
+        return;
+      }
     }
     onSubmit({
       ...draft,
       title: normalizeText(draft.title),
       description: normalizeText(draft.description),
+      detail: draft.detail.trim(),
+      milestones: pending.map((milestone) => ({ ...milestone, name: normalizeText(milestone.name) })),
     });
   }
 
-  const shownError = localError ?? error;
+  async function addMilestone() {
+    const message = validateMilestoneName(nextName);
+    if (message) {
+      setLocalError(message);
+      return;
+    }
+    const name = normalizeText(nextName);
+    setLocalError(null);
+    if (mode === "create") {
+      setDraft((current) => ({
+        ...current,
+        milestones: [...current.milestones, { id: freshMilestoneId(), name, done: false }],
+      }));
+      setNextName("");
+      return;
+    }
+    if (!onAddMilestone) return;
+    setBusyId("add");
+    try {
+      await onAddMilestone(name);
+      setNextName("");
+    } catch (caught) {
+      setLocalError(caught instanceof Error ? caught.message : "Couldn't add that milestone.");
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function toggleMilestone(milestone: Milestone | DraftMilestone) {
+    setLocalError(null);
+    if (mode === "create") {
+      setDraft((current) => ({
+        ...current,
+        milestones: current.milestones.map((item) =>
+          item.id === milestone.id ? { ...item, done: !item.done } : item,
+        ),
+      }));
+      return;
+    }
+    if (!onToggleMilestone) return;
+    setBusyId(milestone.id);
+    try {
+      await onToggleMilestone(milestone as Milestone);
+    } catch (caught) {
+      setLocalError(caught instanceof Error ? caught.message : "Couldn't update that milestone.");
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function renameMilestone(milestone: Milestone | DraftMilestone, name: string) {
+    const message = validateMilestoneName(name);
+    if (message) {
+      setLocalError(message);
+      return;
+    }
+    const cleaned = normalizeText(name);
+    if (cleaned === milestone.name) return;
+    setLocalError(null);
+    if (mode === "create") {
+      setDraft((current) => ({
+        ...current,
+        milestones: current.milestones.map((item) => (item.id === milestone.id ? { ...item, name: cleaned } : item)),
+      }));
+      return;
+    }
+    if (!onRenameMilestone) return;
+    setBusyId(milestone.id);
+    try {
+      await onRenameMilestone(milestone as Milestone, cleaned);
+    } catch (caught) {
+      setLocalError(caught instanceof Error ? caught.message : "Couldn't rename that milestone.");
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function removeMilestone(milestone: Milestone | DraftMilestone) {
+    setLocalError(null);
+    if (mode === "create") {
+      setDraft((current) => ({
+        ...current,
+        milestones: current.milestones.filter((item) => item.id !== milestone.id),
+      }));
+      return;
+    }
+    if (!onDeleteMilestone) return;
+    setBusyId(milestone.id);
+    try {
+      await onDeleteMilestone(milestone as Milestone);
+    } catch (caught) {
+      setLocalError(caught instanceof Error ? caught.message : "Couldn't remove that milestone.");
+    } finally {
+      setBusyId(null);
+    }
+  }
 
   return (
     <Dialog open={open} onOpenChange={(next) => (saving ? undefined : onOpenChange(next))}>
-      <DialogContent className="sm:max-w-lg">
-        <DialogHeader>
-          <DialogTitle className="font-display text-xl">
-            {mode === "create" ? "Add a capability" : "Edit capability"}
+      <DialogContent
+        data-testid="tech-detail"
+        className="tech-popup sm:max-w-xl"
+      >
+        <DialogHeader className="tech-popup-head">
+          <div className="tech-popup-medallion" data-proficiency={draft.proficiency}>
+            <GlyphMark glyph={glyph} />
+          </div>
+          <DialogTitle className="sr-only">
+            {draft.title.trim() || (mode === "create" ? "New capability" : "Capability")}
           </DialogTitle>
-          <DialogDescription>
-            Say what it is, whether the team is good at it, and if anyone is doing it now.
-            Saving stamps this as {author || "you"}.
+          <DialogDescription className="sr-only">
+            Write the longer description and keep the milestone list. Saving stamps this as {author || "you"}.
           </DialogDescription>
         </DialogHeader>
         <form
@@ -170,98 +325,199 @@ export function CapabilityDialog({
             submit();
           }}
         >
-          <div className="grid gap-1.5">
-            <div className="flex items-center justify-between gap-2">
-              <Label htmlFor="capability-title">Title</Label>
-              <span className="text-xs text-muted-foreground">
-                {draft.title.trim().length}/{LIMITS.title}
-              </span>
-            </div>
+          <div className="grid gap-1">
+            <Label htmlFor="capability-title" className="text-[10px] tracking-[0.18em] text-[#e0c088] uppercase">
+              Title
+            </Label>
             <Input
               id="capability-title"
               value={draft.title}
               maxLength={LIMITS.title}
               placeholder="Discovery calls"
+              className="font-display h-auto border-[#e0c088]/30 bg-[#0b1626] px-3 py-2 text-2xl text-[#f6f0e6]"
               onChange={(event) => setDraft((current) => ({ ...current, title: event.target.value }))}
             />
           </div>
-          <div className="grid gap-1.5">
+          <div className="grid gap-1">
             <div className="flex items-center justify-between gap-2">
-              <Label htmlFor="capability-description">Short description</Label>
-              <span className="text-xs text-muted-foreground">
+              <Label htmlFor="capability-subtitle" className="text-[10px] tracking-[0.18em] text-[#e0c088] uppercase">
+                Subtitle
+              </Label>
+              <span className="text-[11px] text-[#8ea0b5]">
                 {draft.description.trim().length}/{LIMITS.description}
               </span>
             </div>
-            <Textarea
-              id="capability-description"
+            <Input
+              id="capability-subtitle"
               value={draft.description}
               maxLength={LIMITS.description}
-              placeholder="The first conversation that decides if a lead is real."
-              onChange={(event) =>
-                setDraft((current) => ({ ...current, description: event.target.value }))
-              }
+              placeholder="The line that shows on the card"
+              className="border-[#e0c088]/25 bg-[#0b1626] text-[#d5deea]"
+              onChange={(event) => setDraft((current) => ({ ...current, description: event.target.value }))}
             />
           </div>
-          <fieldset className="grid gap-1.5">
-            <legend className="text-sm font-medium">Proficiency</legend>
-            <div className="grid grid-cols-3 gap-1 rounded-lg bg-muted p-1">
+          <div className="grid gap-1">
+            <div className="flex items-center justify-between gap-2">
+              <Label htmlFor="capability-detail" className="text-[10px] tracking-[0.18em] text-[#e0c088] uppercase">
+                Description
+              </Label>
+              <span className="text-[11px] text-[#8ea0b5]">
+                {draft.detail.trim().length}/{LIMITS.detail}
+              </span>
+            </div>
+            <Textarea
+              id="capability-detail"
+              value={draft.detail}
+              maxLength={LIMITS.detail}
+              rows={4}
+              placeholder="The longer note the team should read before they start checking boxes."
+              className="min-h-24 border-[#e0c088]/25 bg-[#0b1626] text-[#d5deea]"
+              onChange={(event) => setDraft((current) => ({ ...current, detail: event.target.value }))}
+            />
+          </div>
+          <fieldset className="grid gap-2">
+            <legend className="text-[10px] font-semibold tracking-[0.18em] text-[#e0c088] uppercase">
+              Proficiency
+            </legend>
+            <div className="grid grid-cols-3 gap-2">
               {PROFICIENCIES.map((value) => (
-                <Button
+                <button
                   key={value}
                   type="button"
-                  size="sm"
-                  variant={draft.proficiency === value ? "default" : "ghost"}
                   aria-pressed={draft.proficiency === value}
-                  className="w-full"
+                  className="tech-swatch"
+                  data-selected={draft.proficiency === value ? "true" : "false"}
+                  data-proficiency={value}
                   onClick={() => setDraft((current) => ({ ...current, proficiency: value }))}
                 >
-                  <span
-                    className="size-1.5 rounded-full"
-                    style={{ background: PROFICIENCY_META[value].stripe }}
-                  />
+                  <span style={{ background: PROFICIENCY_META[value].stripe }} />
                   {PROFICIENCY_META[value].label}
-                </Button>
+                </button>
               ))}
             </div>
           </fieldset>
-          <fieldset className="grid gap-1.5">
-            <legend className="text-sm font-medium">Commitment</legend>
-            <div className="grid grid-cols-3 gap-1 rounded-lg bg-muted p-1">
+          <fieldset className="grid gap-2">
+            <legend className="text-[10px] font-semibold tracking-[0.18em] text-[#e0c088] uppercase">
+              Commitment
+            </legend>
+            <div className="grid grid-cols-3 gap-2">
               {COMMITMENTS.map((value) => (
-                <Button
+                <button
                   key={value}
                   type="button"
-                  size="sm"
-                  variant={draft.commitment === value ? "default" : "ghost"}
                   aria-pressed={draft.commitment === value}
-                  className="w-full px-1 text-xs sm:text-sm"
+                  className="tech-choice"
+                  data-selected={draft.commitment === value ? "true" : "false"}
                   onClick={() => setDraft((current) => ({ ...current, commitment: value }))}
                 >
                   {COMMITMENT_META[value].label}
-                </Button>
+                </button>
               ))}
             </div>
           </fieldset>
-          {shownError ? <p className="text-sm text-destructive">{shownError}</p> : null}
+
+          <section className="tech-milestones" aria-label="Milestones">
+            <div className="mb-2 flex items-baseline justify-between gap-3">
+              <h3 className="font-display text-xl text-[#f6f0e6]">Milestones</h3>
+              <p className="text-sm text-[#e0c088]">
+                {counts.done}/{counts.total} done
+              </p>
+            </div>
+            <ul className="grid gap-2">
+              {liveMilestones.map((milestone) => (
+                <li key={milestone.id} className="tech-milestone">
+                  <button
+                    type="button"
+                    className="tech-check"
+                    aria-pressed={milestone.done}
+                    aria-label={milestone.done ? `Mark not done: ${milestone.name}` : `Mark done: ${milestone.name}`}
+                    disabled={busyId === milestone.id}
+                    onClick={() => void toggleMilestone(milestone)}
+                  />
+                  <input
+                    value={mode === "edit" ? (nameDrafts[milestone.id] ?? milestone.name) : milestone.name}
+                    maxLength={LIMITS.milestoneName}
+                    aria-label={`Milestone name: ${milestone.name}`}
+                    disabled={busyId === milestone.id}
+                    onChange={(event) => {
+                      const name = event.target.value;
+                      if (mode === "create") {
+                        setDraft((current) => ({
+                          ...current,
+                          milestones: current.milestones.map((item) =>
+                            item.id === milestone.id ? { ...item, name } : item,
+                          ),
+                        }));
+                        return;
+                      }
+                      setNameDrafts((current) => ({ ...current, [milestone.id]: name }));
+                    }}
+                    onBlur={(event) => {
+                      if (mode !== "edit") return;
+                      const typed = event.target.value;
+                      setNameDrafts((current) => {
+                        const next = { ...current };
+                        delete next[milestone.id];
+                        return next;
+                      });
+                      void renameMilestone(milestone, typed);
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") {
+                        event.preventDefault();
+                        event.currentTarget.blur();
+                      }
+                    }}
+                  />
+                  <button
+                    type="button"
+                    className="tech-milestone-delete"
+                    aria-label={`Delete ${milestone.name}`}
+                    disabled={busyId === milestone.id}
+                    onClick={() => void removeMilestone(milestone)}
+                  >
+                    <Trash2 />
+                  </button>
+                </li>
+              ))}
+            </ul>
+            <div className="mt-2 flex gap-2">
+              <Input
+                value={nextName}
+                maxLength={LIMITS.milestoneName}
+                placeholder="Name the next milestone"
+                aria-label="New milestone"
+                className="border-[#e0c088]/25 bg-[#0b1626]"
+                onChange={(event) => setNextName(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    void addMilestone();
+                  }
+                }}
+              />
+              <Button type="button" variant="outline" disabled={busyId === "add"} onClick={() => void addMilestone()}>
+                Add
+              </Button>
+            </div>
+          </section>
+
+          {shownError ? <p className="text-sm text-[#f0b2a4]">{shownError}</p> : null}
+          <p className="text-xs text-[#8ea0b5]">Stamped as {author || "you"} when you save.</p>
           <DialogFooter className="sm:justify-between">
             {mode === "edit" && onDelete ? (
               <Button type="button" variant="destructive" disabled={saving} onClick={onDelete}>
-                Remove
+                Remove card
               </Button>
             ) : (
               <span />
             )}
             <div className="flex gap-2">
-              <Button
-                type="button"
-                variant="outline"
-                disabled={saving}
-                onClick={() => onOpenChange(false)}
-              >
-                Cancel
+              <Button type="button" variant="outline" disabled={saving} onClick={() => onOpenChange(false)}>
+                Close
               </Button>
               <Button type="submit" disabled={saving}>
-                {saving ? "Saving…" : mode === "create" ? "Add to the tree" : "Save changes"}
+                {saving ? "Saving…" : mode === "create" ? "Place on the tree" : "Save card"}
               </Button>
             </div>
           </DialogFooter>

@@ -21,7 +21,6 @@ import {
 import { Plus } from "lucide-react";
 import "@xyflow/react/dist/style.css";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -42,13 +41,13 @@ import {
 import { EraBand, type EraFlowNode } from "@/components/board/era-band";
 import {
   BAND_OFFSET_X,
-  BAND_WIDTH,
   COLUMNS,
   COLUMN_X,
-  COMMITMENT_META,
   FIRST_NODE_Y,
   NODE_STEP_Y,
   NODE_WIDTH,
+  PLAQUE_HEIGHT,
+  PLAQUE_WIDTH,
   PROFICIENCY_META,
   nearestColumnIndex,
   snapX,
@@ -60,7 +59,7 @@ import {
   subscribeDisplayName,
   useClientReady,
 } from "@/lib/display-name";
-import type { BoardEdge, BoardNode, BoardSnapshot, Proficiency } from "@/lib/types";
+import type { BoardEdge, BoardNode, BoardSnapshot, Milestone } from "@/lib/types";
 
 type MeridianNode = CapabilityFlowNode | EraFlowNode;
 
@@ -89,9 +88,12 @@ function toCapabilityNode(node: BoardNode, selected: boolean): CapabilityFlowNod
     data: {
       title: node.title,
       description: node.description,
+      detail: node.detail,
+      glyph: node.glyph,
       proficiency: node.proficiency,
       commitment: node.commitment,
       author: node.author,
+      milestones: node.milestones,
     },
     selected,
     zIndex: 3,
@@ -320,8 +322,10 @@ function BoardCanvas() {
     setSeed({
       title: node.data.title,
       description: node.data.description,
+      detail: node.data.detail,
       proficiency: node.data.proficiency,
       commitment: node.data.commitment,
+      milestones: [],
     });
     setFormError(null);
     setFormKey((key) => key + 1);
@@ -348,11 +352,22 @@ function BoardCanvas() {
         }
         await send("/api/nodes", "POST", {
           ...payload,
+          milestones: draft.milestones.map((milestone) => ({
+            name: milestone.name,
+            done: milestone.done,
+          })),
           x: COLUMN_X[index],
           y: FIRST_NODE_Y + column[index] * NODE_STEP_Y,
         });
       } else if (editingId) {
-        await send(`/api/nodes/${editingId}`, "PATCH", payload);
+        await send(`/api/nodes/${editingId}`, "PATCH", {
+          title: draft.title,
+          description: draft.description,
+          detail: draft.detail,
+          proficiency: draft.proficiency,
+          commitment: draft.commitment,
+          author: displayName,
+        });
       }
       setDialogOpen(false);
     } catch (error) {
@@ -390,6 +405,44 @@ function BoardCanvas() {
     } catch (error) {
       note(error instanceof Error ? error.message : "Couldn't remove that link.");
     }
+  }
+
+  function requireName(): string | null {
+    if (displayName) return displayName;
+    setNameDialogKey((key) => key + 1);
+    setRenaming(true);
+    return null;
+  }
+
+  async function addMilestone(name: string) {
+    if (!editingId) return;
+    const author = requireName();
+    if (!author) throw new Error("Add your name before changing the board.");
+    await send(`/api/nodes/${editingId}/milestones`, "POST", { name, author });
+  }
+
+  async function toggleMilestone(milestone: Milestone) {
+    if (!editingId) return;
+    const author = requireName();
+    if (!author) throw new Error("Add your name before changing the board.");
+    await send(`/api/nodes/${editingId}/milestones/${milestone.id}`, "PATCH", {
+      done: !milestone.done,
+      author,
+    });
+  }
+
+  async function renameMilestone(milestone: Milestone, name: string) {
+    if (!editingId) return;
+    const author = requireName();
+    if (!author) throw new Error("Add your name before changing the board.");
+    await send(`/api/nodes/${editingId}/milestones/${milestone.id}`, "PATCH", { name, author });
+  }
+
+  async function deleteMilestone(milestone: Milestone) {
+    if (!editingId) return;
+    const author = requireName();
+    if (!author) throw new Error("Add your name before changing the board.");
+    await send(`/api/nodes/${editingId}/milestones/${milestone.id}`, "DELETE", { author });
   }
 
   const onConnect = (connection: Connection) => {
@@ -433,16 +486,11 @@ function BoardCanvas() {
       });
   };
 
-  const bandHeight = useMemo(() => {
-    const lowest = caps.reduce((max, node) => Math.max(max, node.position.y), 0);
-    return Math.max(820, lowest + 380);
-  }, [caps]);
-
   const flowNodes = useMemo(() => {
     const eras: EraFlowNode[] = COLUMNS.map((column, index) => ({
       id: `era-${column.key}`,
       type: "era",
-      position: { x: COLUMN_X[index] + BAND_OFFSET_X, y: -12 },
+      position: { x: COLUMN_X[index] + BAND_OFFSET_X, y: 16 },
       data: {
         numeral: column.numeral,
         title: column.title,
@@ -455,12 +503,11 @@ function BoardCanvas() {
       focusable: false,
       deletable: false,
       zIndex: 0,
-      style: { width: BAND_WIDTH, height: bandHeight, pointerEvents: "none" },
+      style: { width: PLAQUE_WIDTH, height: PLAQUE_HEIGHT, pointerEvents: "none" },
     }));
     return [...eras, ...caps];
-  }, [activeColumn, bandHeight, caps]);
+  }, [activeColumn, caps]);
 
-  const selectedNode = caps.find((node) => node.selected) ?? null;
   const selectedEdge = edges.find((edge) => edge.id === selectedEdgeId) ?? null;
   const edgeSource = selectedEdge ? caps.find((node) => node.id === selectedEdge.source) : null;
   const edgeTarget = selectedEdge ? caps.find((node) => node.id === selectedEdge.target) : null;
@@ -473,26 +520,26 @@ function BoardCanvas() {
   }
 
   return (
-    <div className="flex h-dvh min-h-0 flex-col bg-[#10161c] text-[#f4efe6]">
-      <header className="z-20 border-b border-[#e0c088]/15 bg-[#121920]/95 px-3 py-3 sm:px-5">
+    <div className="meridian-shell flex h-dvh min-h-0 flex-col text-[#f4efe6]">
+      <header className="z-20 border-b border-[#e0c088]/25 bg-[#071422]/90 px-3 py-3 sm:px-5">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="min-w-0">
-            <div className="flex items-baseline gap-2">
+            <div className="flex items-baseline gap-3">
               <h1 className="font-display text-2xl tracking-tight text-[#f6f0e6]">Meridian</h1>
-              <span className="hidden text-[11px] font-semibold tracking-[0.18em] text-[#e0c088] uppercase sm:inline">
-                Shared tree
+              <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold tracking-[0.16em] text-[#e0c088] uppercase">
+                <span className={`size-1.5 rounded-full ${syncError ? "bg-[#e07a5f]" : "bg-[#3cba9a]"}`} />
+                {syncError ? "Reconnecting" : status === "loading" ? "Opening" : "Live"}
               </span>
             </div>
             <p className="max-w-xl text-xs leading-relaxed text-[#9aa6b2] sm:text-sm">
-              Sales, dev, and engineering align on what is connected, what the team is good or
-              bad at, and what is in motion.
+              Open a card for the writeup and the milestone list. The border color is the team&apos;s read on it.
             </p>
           </div>
           <div className="flex items-center gap-2">
             <Button
               variant="outline"
               size="sm"
-              className="max-w-[10rem]"
+              className="max-w-[10rem] border-[#e0c088]/30 bg-[#0c1a2c]"
               onClick={() => {
                 setNameDialogKey((key) => key + 1);
                 setRenaming(true);
@@ -507,34 +554,6 @@ function BoardCanvas() {
               <span className="hidden sm:inline">Add capability</span>
             </Button>
           </div>
-        </div>
-        <div className="mt-3 flex gap-2 overflow-x-auto pb-1 text-[11px] text-[#9aa6b2]">
-          <span className="inline-flex shrink-0 items-center gap-1.5 pr-1">
-            <span className={`size-1.5 rounded-full ${syncError ? "bg-[#e07a5f]" : "bg-[#3cba9a]"}`} />
-            {syncError ? "Reconnecting" : status === "loading" ? "Opening" : "Live"}
-          </span>
-          {(Object.keys(PROFICIENCY_META) as Proficiency[]).map((key) => (
-            <Badge
-              key={key}
-              variant="outline"
-              className="shrink-0 border-[#e0c088]/20 bg-transparent text-[#d5dbe6]"
-            >
-              <span className="size-1.5 rounded-full" style={{ background: PROFICIENCY_META[key].stripe }} />
-              {PROFICIENCY_META[key].label}
-            </Badge>
-          ))}
-          <Badge variant="outline" className="shrink-0 border-[#e0c088]/20 bg-transparent text-[#e0c088]">
-            Doing now
-          </Badge>
-          <Badge variant="outline" className="shrink-0 border-dashed border-[#e0c088]/50 bg-transparent text-[#e0c088]">
-            Next step
-          </Badge>
-          <Badge variant="outline" className="shrink-0 border-[#e0c088]/15 bg-transparent text-[#9aa6b2]">
-            Not doing
-          </Badge>
-          <span className="hidden shrink-0 items-center sm:inline">
-            Drag a card between eras. Pull the gold notch to what it leads to.
-          </span>
         </div>
       </header>
 
@@ -556,12 +575,11 @@ function BoardCanvas() {
           onNodeDragStart={onNodeDragStart}
           onNodeDrag={onNodeDrag}
           onNodeDragStop={onNodeDragStop}
-          onNodeClick={(_event, node) => {
+          onNodeClick={(event, node) => {
             if (node.type !== "capability") return;
+            const target = event.target as HTMLElement | null;
+            if (target?.closest(".react-flow__handle")) return;
             setSelectedEdgeId(null);
-          }}
-          onNodeDoubleClick={(_event, node) => {
-            if (node.type !== "capability") return;
             openEdit(node);
           }}
           onEdgeClick={(_event, edge) => {
@@ -592,13 +610,14 @@ function BoardCanvas() {
           proOptions={{ hideAttribution: false }}
           aria-label="Shared capability tree"
         >
-          <Background variant={BackgroundVariant.Dots} gap={28} size={1} color="rgba(224,192,136,0.16)" />
-          <Controls showInteractive={false} />
+          <Background variant={BackgroundVariant.Dots} gap={28} size={1} color="rgba(224,192,136,0.14)" />
+          <Controls showInteractive={false} position="bottom-right" />
           <MiniMap
             pannable
             zoomable
-            bgColor="#121920"
-            maskColor="rgba(16,22,28,0.72)"
+            position="bottom-left"
+            bgColor="#071422"
+            maskColor="rgba(7,20,34,0.72)"
             nodeColor={(node) => {
               if (node.type !== "capability") return "transparent";
               const data = node.data as CapabilityFlowNode["data"];
@@ -637,37 +656,9 @@ function BoardCanvas() {
           <Overlay
             testId="empty-state"
             title="The tree is still bare"
-            body="Add the first capability the team should align on — something you are good at, stuck on, or still figuring out. Then link what it leads to."
+            body="Add the first capability, then open it and write the milestones the team can check off. Link what it leads to from the gold notch."
             action={<Button data-testid="empty-add" onClick={openCreate}>Add the first capability</Button>}
           />
-        ) : null}
-
-        {selectedNode && !selectedEdge ? (
-          <div className="pointer-events-none absolute inset-x-0 bottom-3 z-20 flex justify-center px-3">
-            <div className="pointer-events-auto w-full max-w-lg rounded-2xl border border-[#e0c088]/25 bg-[#17202a]/95 p-3 shadow-2xl backdrop-blur-sm">
-              <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <p className="font-display truncate text-base text-[#f6f0e6]">{selectedNode.data.title}</p>
-                  <p className="text-xs text-[#9aa6b2]">
-                    {PROFICIENCY_META[selectedNode.data.proficiency].label}
-                    {" · "}
-                    {COMMITMENT_META[selectedNode.data.commitment].label}
-                    {" · "}
-                    {selectedNode.data.author}
-                  </p>
-                </div>
-              </div>
-              <div className="mt-2 flex flex-wrap gap-2">
-                <Button size="sm" onClick={() => openEdit(selectedNode)}>Edit</Button>
-                <Button size="sm" variant="destructive" onClick={() => askDelete(selectedNode)}>
-                  Remove
-                </Button>
-                <p className="self-center text-xs text-[#8b97a6]">
-                  Drag the gold notch on the right to link what this leads to.
-                </p>
-              </div>
-            </div>
-          </div>
         ) : null}
 
         {selectedEdge && edgeSource && edgeTarget ? (
@@ -699,11 +690,17 @@ function BoardCanvas() {
         open={dialogOpen}
         mode={dialogMode}
         seed={seed}
+        glyph={caps.find((node) => node.id === editingId)?.data.glyph ?? "compass"}
         author={displayName ?? ""}
+        milestones={caps.find((node) => node.id === editingId)?.data.milestones ?? []}
         saving={saving}
         error={formError}
         onOpenChange={setDialogOpen}
         onSubmit={(draft) => void submitDraft(draft)}
+        onAddMilestone={addMilestone}
+        onToggleMilestone={toggleMilestone}
+        onRenameMilestone={renameMilestone}
+        onDeleteMilestone={deleteMilestone}
         onDelete={
           dialogMode === "edit" && editingId
             ? () => {
@@ -739,7 +736,10 @@ function boardNodeFromFlow(node: CapabilityFlowNode): BoardNode {
     id: node.id,
     title: node.data.title,
     description: node.data.description,
+    detail: node.data.detail,
+    glyph: node.data.glyph,
     proficiency: node.data.proficiency,
+    milestones: node.data.milestones,
     commitment: node.data.commitment,
     author: node.data.author,
     x: node.position.x,
