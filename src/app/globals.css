@@ -192,9 +192,7 @@
 }
 
 .meridian-flow .react-flow__attribution {
-  background: transparent !important;
-  color: rgba(154, 166, 178, 0.55) !important;
-  font-size: 10px !important;
+  display: none !important;
 }
 
 .meridian-flow .react-flow__handle.meridian-handle {
