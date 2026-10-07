@@ -8,6 +8,7 @@ export type LocalCampaign = {
 };
 
 const listeners = new Set<() => void>();
+const serverCampaigns: LocalCampaign[] = [];
 let cached: LocalCampaign[] = [];
 let loaded = false;
 
@@ -48,7 +49,7 @@ export function getLocalCampaigns(): LocalCampaign[] {
 }
 
 export function getServerLocalCampaigns(): LocalCampaign[] {
-  return [];
+  return serverCampaigns;
 }
 
 export function rememberCampaign(campaign: LocalCampaign) {
