@@ -154,6 +154,11 @@ export function CapabilityDialog({
   onToggleMilestone,
   onRenameMilestone,
   onDeleteMilestone,
+  leadsTo,
+  comesFrom,
+  linkChoices,
+  onAddLink,
+  onRemoveLink,
 }: {
   open: boolean;
   mode: "create" | "edit";
@@ -170,16 +175,23 @@ export function CapabilityDialog({
   onToggleMilestone?: (milestone: Milestone) => Promise<void>;
   onRenameMilestone?: (milestone: Milestone, name: string) => Promise<void>;
   onDeleteMilestone?: (milestone: Milestone) => Promise<void>;
+  leadsTo: { id: string; title: string }[];
+  comesFrom: { id: string; title: string }[];
+  linkChoices: { id: string; title: string }[];
+  onAddLink?: (targetId: string) => Promise<void>;
+  onRemoveLink?: (edgeId: string) => Promise<void>;
 }) {
   const [draft, setDraft] = useState<CapabilityDraft>(seed);
   const [localError, setLocalError] = useState<string | null>(null);
   const [nextName, setNextName] = useState("");
   const [busyId, setBusyId] = useState<string | null>(null);
   const [nameDrafts, setNameDrafts] = useState<Record<string, string>>({});
+  const [linkTarget, setLinkTarget] = useState("");
 
   const liveMilestones = mode === "edit" ? milestones : draft.milestones;
   const counts = milestoneCounts(liveMilestones);
   const shownError = localError ?? error;
+  const chosenTarget = linkChoices.some((choice) => choice.id === linkTarget) ? linkTarget : "";
 
   function submit() {
     const message = validateCapability({ ...draft, author }) ?? validateDetail(draft.detail);
@@ -202,6 +214,33 @@ export function CapabilityDialog({
       detail: draft.detail.trim(),
       milestones: pending.map((milestone) => ({ ...milestone, name: normalizeText(milestone.name) })),
     });
+  }
+
+  async function addLink() {
+    if (!chosenTarget || !onAddLink) return;
+    setLocalError(null);
+    setBusyId("link");
+    try {
+      await onAddLink(chosenTarget);
+      setLinkTarget("");
+    } catch (caught) {
+      setLocalError(caught instanceof Error ? caught.message : "Couldn't add that link.");
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function removeLink(edgeId: string) {
+    if (!onRemoveLink) return;
+    setLocalError(null);
+    setBusyId(edgeId);
+    try {
+      await onRemoveLink(edgeId);
+    } catch (caught) {
+      setLocalError(caught instanceof Error ? caught.message : "Couldn't remove that link.");
+    } finally {
+      setBusyId(null);
+    }
   }
 
   async function addMilestone() {
@@ -305,7 +344,7 @@ export function CapabilityDialog({
     <Dialog open={open} onOpenChange={(next) => (saving ? undefined : onOpenChange(next))}>
       <DialogContent
         data-testid="tech-detail"
-        className="tech-popup sm:max-w-xl"
+        className="tech-popup sm:max-w-4xl"
       >
         <DialogHeader className="tech-popup-head">
           <div className="tech-popup-medallion" data-proficiency={draft.proficiency}>
@@ -325,6 +364,8 @@ export function CapabilityDialog({
             submit();
           }}
         >
+          <div className="tech-popup-grid">
+          <div className="grid gap-4">
           <div className="grid gap-1">
             <Label htmlFor="capability-title" className="text-[10px] tracking-[0.18em] text-[#e0c088] uppercase">
               Title
@@ -415,6 +456,83 @@ export function CapabilityDialog({
               ))}
             </div>
           </fieldset>
+          </div>
+
+          <div className="grid gap-4">
+          <section className="tech-links" data-testid="leads-to" aria-label="Leads to">
+            <div className="mb-2 flex items-baseline justify-between gap-3">
+              <h3 className="font-display text-xl text-[#f6f0e6]">Leads to</h3>
+            </div>
+            {mode === "create" ? (
+              <p className="text-sm text-[#9aa6b2]">
+                Place this card on the tree, then open it to choose what it leads to.
+              </p>
+            ) : (
+              <>
+                {leadsTo.length === 0 ? (
+                  <p className="text-sm text-[#9aa6b2]">Nothing yet. Choose the card this one leads to.</p>
+                ) : (
+                  <ul className="grid gap-1.5">
+                    {leadsTo.map((link) => (
+                      <li key={link.id} className="tech-link-row">
+                        <span>{link.title}</span>
+                        <button
+                          type="button"
+                          onClick={() => void removeLink(link.id)}
+                          disabled={busyId === link.id}
+                        >
+                          Remove
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                <div className="mt-2 flex gap-2">
+                  <select
+                    data-testid="leads-to-picker"
+                    aria-label="Choose a card this leads to"
+                    value={chosenTarget}
+                    onChange={(event) => setLinkTarget(event.target.value)}
+                  >
+                    <option value="">Choose a card</option>
+                    {linkChoices.map((choice) => (
+                      <option key={choice.id} value={choice.id}>
+                        {choice.title}
+                      </option>
+                    ))}
+                  </select>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    disabled={!chosenTarget || busyId === "link"}
+                    onClick={() => void addLink()}
+                  >
+                    Add link
+                  </Button>
+                </div>
+              </>
+            )}
+          </section>
+
+          <section className="tech-links" aria-label="Comes from">
+            <h3 className="font-display mb-2 text-xl text-[#f6f0e6]">Comes from</h3>
+            {mode === "create" || comesFrom.length === 0 ? (
+              <p className="text-sm text-[#9aa6b2]">
+                {mode === "create" ? "Incoming links show up after the card is on the tree." : "No earlier card leads here yet."}
+              </p>
+            ) : (
+              <ul className="grid gap-1.5">
+                {comesFrom.map((link) => (
+                  <li key={link.id} className="tech-link-row">
+                    <span>{link.title}</span>
+                    <button type="button" onClick={() => void removeLink(link.id)} disabled={busyId === link.id}>
+                      Remove
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
 
           <section className="tech-milestones" aria-label="Milestones">
             <div className="mb-2 flex items-baseline justify-between gap-3">
@@ -501,6 +619,8 @@ export function CapabilityDialog({
               </Button>
             </div>
           </section>
+          </div>
+          </div>
 
           {shownError ? <p className="text-sm text-[#f0b2a4]">{shownError}</p> : null}
           <p className="text-xs text-[#8ea0b5]">Stamped as {author || "you"} when you save.</p>

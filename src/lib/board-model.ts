@@ -14,12 +14,12 @@ export const LIMITS = {
 
 export const NODE_WIDTH = 232;
 export const PLAQUE_WIDTH = 210;
-export const PLAQUE_HEIGHT = 64;
+export const PLAQUE_HEIGHT = 78;
 export const COLUMN_X = [48, 388, 728, 1068] as const;
 export const BAND_WIDTH = PLAQUE_WIDTH;
 export const BAND_OFFSET_X = Math.round((NODE_WIDTH - PLAQUE_WIDTH) / 2);
-export const FIRST_NODE_Y = 128;
-export const NODE_STEP_Y = 214;
+export const FIRST_NODE_Y = 140;
+export const NODE_STEP_Y = 268;
 
 export const COLUMNS = [
   {
@@ -116,6 +116,15 @@ export function milestoneCounts(milestones: { done: boolean }[]): { done: number
   const total = milestones.length;
   const done = milestones.reduce((count, milestone) => count + (milestone.done ? 1 : 0), 0);
   return { done, total };
+}
+
+export type ResearchState = "waiting" | "progress" | "researched";
+
+export function researchState(milestones: { done: boolean }[]): ResearchState {
+  const { done, total } = milestoneCounts(milestones);
+  if (total > 0 && done === total) return "researched";
+  if (done > 0) return "progress";
+  return "waiting";
 }
 
 export function validateIdentity(author: string): string | null {

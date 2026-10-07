@@ -32,8 +32,8 @@ export const EXAMPLE_NODES: ExampleNode[] = [
       { name: "Open with their last quarter", done: true },
       { name: "Name the economic buyer", done: true },
       { name: "Book the follow-up before hanging up", done: true },
-      { name: "Log the call the same day", done: false },
-      { name: "Share one useful artifact", done: false },
+      { name: "Log the call the same day", done: true },
+      { name: "Share one useful artifact", done: true },
     ],
   },
   {

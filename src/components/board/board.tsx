@@ -31,6 +31,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { BoardChrome } from "@/components/board/board-chrome";
 import { CapabilityNode, type CapabilityFlowNode } from "@/components/board/capability-node";
 import {
   CapabilityDialog,
@@ -49,7 +50,9 @@ import {
   PLAQUE_HEIGHT,
   PLAQUE_WIDTH,
   PROFICIENCY_META,
+  milestoneCounts,
   nearestColumnIndex,
+  researchState,
   snapX,
 } from "@/lib/board-model";
 import {
@@ -122,9 +125,9 @@ function settlePosition(x: number, y: number, selfId: string, nodes: CapabilityF
     (node) => node.id !== selfId && Math.abs(node.position.x - snappedX) < 8,
   );
   let guard = 0;
-  while (others.some((node) => Math.abs(node.position.y - nextY) < 136) && guard < 24) {
+  while (others.some((node) => Math.abs(node.position.y - nextY) < 220) && guard < 24) {
     const blocker = others
-      .filter((node) => Math.abs(node.position.y - nextY) < 136)
+      .filter((node) => Math.abs(node.position.y - nextY) < 220)
       .sort((a, b) => a.position.y - b.position.y)[0];
     nextY = Math.round((blocker?.position.y ?? nextY) + NODE_STEP_Y);
     guard += 1;
@@ -162,6 +165,9 @@ function BoardCanvas() {
   const [pendingDelete, setPendingDelete] = useState<BoardNode | null>(null);
   const [activeColumn, setActiveColumn] = useState<number | null>(null);
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
+  const [linkingFromId, setLinkingFromId] = useState<string | null>(null);
+  const [flashId, setFlashId] = useState<string | null>(null);
+  const [celebration, setCelebration] = useState<{ tone: "milestone" | "researched"; text: string } | null>(null);
 
   const revisionRef = useRef(-1);
   const writesRef = useRef(0);
@@ -265,6 +271,15 @@ function BoardCanvas() {
       window.clearInterval(timer);
     };
   }, [refresh]);
+
+  useEffect(() => {
+    if (!linkingFromId) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setLinkingFromId(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [linkingFromId]);
 
   async function send(url: string, method: string, body?: unknown): Promise<BoardSnapshot> {
     writesRef.current += 1;
@@ -390,21 +405,23 @@ function BoardCanvas() {
   }
 
   async function persistEdge(source: string, target: string) {
-    if (!displayName) return;
-    try {
-      await send("/api/edges", "POST", { source, target, author: displayName });
-    } catch (error) {
-      note(error instanceof Error ? error.message : "Couldn't add that link.");
-    }
+    const author = requireName();
+    if (!author) throw new Error("Add your name before changing the board.");
+    await send("/api/edges", "POST", { source, target, author });
   }
 
   async function removeEdge(id: string) {
-    try {
-      await send(`/api/edges/${id}`, "DELETE");
-      setSelectedEdgeId(null);
-    } catch (error) {
-      note(error instanceof Error ? error.message : "Couldn't remove that link.");
-    }
+    await send(`/api/edges/${id}`, "DELETE");
+    setSelectedEdgeId(null);
+  }
+
+  function celebrate(tone: "milestone" | "researched", text: string, cardId?: string) {
+    setCelebration({ tone, text });
+    if (cardId) setFlashId(cardId);
+    window.setTimeout(() => {
+      setCelebration((current) => (current?.text === text ? null : current));
+      if (cardId) setFlashId((current) => (current === cardId ? null : current));
+    }, tone === "researched" ? 4200 : 2600);
   }
 
   function requireName(): string | null {
@@ -425,10 +442,20 @@ function BoardCanvas() {
     if (!editingId) return;
     const author = requireName();
     if (!author) throw new Error("Add your name before changing the board.");
+    const card = caps.find((node) => node.id === editingId);
+    const completing = !milestone.done;
+    const doneAfter = (card?.data.milestones.filter((item) => item.done).length ?? 0) + (completing ? 1 : 0);
+    const total = card?.data.milestones.length ?? 0;
+    const finishesCard = completing && total > 0 && doneAfter === total;
     await send(`/api/nodes/${editingId}/milestones/${milestone.id}`, "PATCH", {
       done: !milestone.done,
       author,
     });
+    if (finishesCard && card) {
+      celebrate("researched", `Researched. Every milestone on ${card.data.title} is done.`, card.id);
+    } else if (completing) {
+      celebrate("milestone", "Milestone checked off.");
+    }
   }
 
   async function renameMilestone(milestone: Milestone, name: string) {
@@ -447,8 +474,17 @@ function BoardCanvas() {
 
   const onConnect = (connection: Connection) => {
     if (!connection.source || !connection.target) return;
-    void persistEdge(connection.source, connection.target);
+    void persistEdge(connection.source, connection.target).catch((error: unknown) => {
+      note(error instanceof Error ? error.message : "Couldn't add that link.");
+    });
   };
+
+  function startLink(id: string) {
+    if (!requireName()) return;
+    setDialogOpen(false);
+    setSelectedEdgeId(null);
+    setLinkingFromId((current) => (current === id ? null : id));
+  }
 
   const onNodeDragStart: OnNodeDrag<MeridianNode> = (_event, node) => {
     draggingRef.current = node.id;
@@ -508,6 +544,57 @@ function BoardCanvas() {
     return [...eras, ...caps];
   }, [activeColumn, caps]);
 
+  const campaign = useMemo(() => {
+    return caps.reduce(
+      (totals, node) => {
+        const counts = milestoneCounts(node.data.milestones);
+        totals.done += counts.done;
+        totals.total += counts.total;
+        return totals;
+      },
+      { done: 0, total: 0 },
+    );
+  }, [caps]);
+
+  const awaitingIds = useMemo(() => {
+    const researched = new Set(
+      caps.filter((node) => researchState(node.data.milestones) === "researched").map((node) => node.id),
+    );
+    const waiting = new Set<string>();
+    for (const edge of edges) {
+      if (!researched.has(edge.source)) waiting.add(edge.target);
+    }
+    return waiting;
+  }, [caps, edges]);
+
+  const linkingTitle = caps.find((node) => node.id === linkingFromId)?.data.title ?? "This card";
+  const editingNode = caps.find((node) => node.id === editingId) ?? null;
+  const leadsTo = editingNode
+    ? edges
+        .filter((edge) => edge.source === editingNode.id)
+        .map((edge) => ({
+          id: edge.id,
+          title: caps.find((node) => node.id === edge.target)?.data.title ?? "Missing card",
+        }))
+    : [];
+  const comesFrom = editingNode
+    ? edges
+        .filter((edge) => edge.target === editingNode.id)
+        .map((edge) => ({
+          id: edge.id,
+          title: caps.find((node) => node.id === edge.source)?.data.title ?? "Missing card",
+        }))
+    : [];
+  const linkChoices = editingNode
+    ? caps
+        .filter(
+          (node) =>
+            node.id !== editingNode.id &&
+            !edges.some((edge) => edge.source === editingNode.id && edge.target === node.id),
+        )
+        .map((node) => ({ id: node.id, title: node.data.title }))
+    : [];
+
   const selectedEdge = edges.find((edge) => edge.id === selectedEdgeId) ?? null;
   const edgeSource = selectedEdge ? caps.find((node) => node.id === selectedEdge.source) : null;
   const edgeTarget = selectedEdge ? caps.find((node) => node.id === selectedEdge.target) : null;
@@ -520,6 +607,7 @@ function BoardCanvas() {
   }
 
   return (
+    <BoardChrome.Provider value={{ linkingFromId, flashId, awaitingIds, startLink }}>
     <div className="meridian-shell flex h-dvh min-h-0 flex-col text-[#f4efe6]">
       <header className="z-20 border-b border-[#e0c088]/25 bg-[#071422]/90 px-3 py-3 sm:px-5">
         <div className="flex flex-wrap items-center justify-between gap-3">
@@ -532,7 +620,7 @@ function BoardCanvas() {
               </span>
             </div>
             <p className="max-w-xl text-xs leading-relaxed text-[#9aa6b2] sm:text-sm">
-              Open a card for the writeup and the milestone list. The border color is the team&apos;s read on it.
+              Open a card for the writeup and the milestone list. Click Link, then the card it leads to.
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -554,6 +642,17 @@ function BoardCanvas() {
               <span className="hidden sm:inline">Add capability</span>
             </Button>
           </div>
+        </div>
+        <div className="campaign" data-testid="campaign-bar">
+          <span className="campaign-kicker">Campaign</span>
+          <span className="campaign-track" aria-hidden="true">
+            <span
+              style={{ width: `${campaign.total === 0 ? 0 : Math.round((campaign.done / campaign.total) * 100)}%` }}
+            />
+          </span>
+          <span className="campaign-count">
+            {campaign.done} of {campaign.total} milestones
+          </span>
         </div>
       </header>
 
@@ -578,15 +677,30 @@ function BoardCanvas() {
           onNodeClick={(event, node) => {
             if (node.type !== "capability") return;
             const target = event.target as HTMLElement | null;
-            if (target?.closest(".react-flow__handle")) return;
+            if (target?.closest(".react-flow__handle") || target?.closest("[data-link-action]")) return;
             setSelectedEdgeId(null);
+            if (linkingFromId) {
+              if (node.id === linkingFromId) {
+                setLinkingFromId(null);
+                return;
+              }
+              void persistEdge(linkingFromId, node.id)
+                .then(() => setLinkingFromId(null))
+                .catch((error: unknown) => {
+                  note(error instanceof Error ? error.message : "Couldn't add that link.");
+                });
+              return;
+            }
             openEdit(node);
           }}
           onEdgeClick={(_event, edge) => {
             setSelectedEdgeId(edge.id);
             setCaps((current) => current.map((node) => ({ ...node, selected: false })));
           }}
-          onPaneClick={() => setSelectedEdgeId(null)}
+          onPaneClick={() => {
+            setSelectedEdgeId(null);
+            setLinkingFromId(null);
+          }}
           isValidConnection={(connection) => {
             if (!connection.source || !connection.target) return false;
             if (connection.source === connection.target) return false;
@@ -598,7 +712,7 @@ function BoardCanvas() {
           defaultViewport={{ x: 16, y: 12, zoom: 0.9 }}
           minZoom={0.35}
           maxZoom={1.4}
-          connectionRadius={36}
+          connectionRadius={60}
           deleteKeyCode={null}
           multiSelectionKeyCode={null}
           selectionKeyCode={null}
@@ -627,10 +741,27 @@ function BoardCanvas() {
           />
         </ReactFlow>
 
+        {linkingFromId ? (
+          <div className="link-hint" data-testid="link-hint" role="status">
+            <span>
+              <strong>{linkingTitle}.</strong> Click the card this leads to
+            </span>
+            <button type="button" onClick={() => setLinkingFromId(null)}>
+              Cancel
+            </button>
+          </div>
+        ) : null}
+
+        {celebration ? (
+          <div className={`celebrate celebrate-${celebration.tone}`} role="status">
+            {celebration.text}
+          </div>
+        ) : null}
+
         {syncError || banner ? (
           <div
             role="status"
-            className="absolute top-3 left-1/2 z-20 flex w-[min(100%-1.5rem,36rem)] -translate-x-1/2 items-center justify-between gap-3 rounded-xl border border-[#e07a5f]/40 bg-[#2a1b18]/95 px-3 py-2 text-sm text-[#f8d7cf] shadow-lg"
+            className={`absolute left-1/2 z-20 flex w-[min(100%-1.5rem,36rem)] -translate-x-1/2 items-center justify-between gap-3 rounded-xl border border-[#e07a5f]/40 bg-[#2a1b18]/95 px-3 py-2 text-sm text-[#f8d7cf] shadow-lg ${linkingFromId ? "top-20" : "top-3"}`}
           >
             <span>{syncError ?? banner}</span>
             {syncError ? (
@@ -656,7 +787,7 @@ function BoardCanvas() {
           <Overlay
             testId="empty-state"
             title="The tree is still bare"
-            body="Add the first capability, then open it and write the milestones the team can check off. Link what it leads to from the gold notch."
+            body="Add the first capability, then open it and write the milestones the team can check off. Use Link to choose what it leads to."
             action={<Button data-testid="empty-add" onClick={openCreate}>Add the first capability</Button>}
           />
         ) : null}
@@ -669,7 +800,15 @@ function BoardCanvas() {
                 <span className="text-[#9aa6b2]"> leads to </span>
                 <span className="font-display">{edgeTarget.data.title}</span>
               </p>
-              <Button size="sm" variant="destructive" onClick={() => void removeEdge(selectedEdge.id)}>
+              <Button
+                size="sm"
+                variant="destructive"
+                onClick={() => {
+                  void removeEdge(selectedEdge.id).catch((error: unknown) => {
+                    note(error instanceof Error ? error.message : "Couldn't remove that link.");
+                  });
+                }}
+              >
                 Remove link
               </Button>
             </div>
@@ -701,6 +840,14 @@ function BoardCanvas() {
         onToggleMilestone={toggleMilestone}
         onRenameMilestone={renameMilestone}
         onDeleteMilestone={deleteMilestone}
+        leadsTo={leadsTo}
+        comesFrom={comesFrom}
+        linkChoices={linkChoices}
+        onAddLink={async (targetId) => {
+          if (!editingId) return;
+          await persistEdge(editingId, targetId);
+        }}
+        onRemoveLink={removeEdge}
         onDelete={
           dialogMode === "edit" && editingId
             ? () => {
@@ -728,6 +875,7 @@ function BoardCanvas() {
         </AlertDialogContent>
       </AlertDialog>
     </div>
+    </BoardChrome.Provider>
   );
 }
 

@@ -175,10 +175,10 @@ function migrate(db: Database.Database): void {
         "INSERT INTO meta (key, value) VALUES ('content_version', 1) ON CONFLICT(key) DO UPDATE SET value = 1",
       ).run();
     }
-    if (metaValue(db, "layout_version") < 2) {
+    if (metaValue(db, "layout_version") < 3) {
       restackColumns(db);
       db.prepare(
-        "INSERT INTO meta (key, value) VALUES ('layout_version', 2) ON CONFLICT(key) DO UPDATE SET value = 2",
+        "INSERT INTO meta (key, value) VALUES ('layout_version', 3) ON CONFLICT(key) DO UPDATE SET value = 3",
       ).run();
       bump(db);
     }

@@ -23,10 +23,12 @@ Nodes and links live in `data/board.sqlite` (created on first run, gitignored). 
 
 - Add, edit, and remove capability cards
 - Open a card to edit the subtitle, the longer description, proficiency, and commitment
-- Add, rename, check off, and delete milestones. The card shows completed/total
+- Add, rename, check off, and delete milestones. The card shows completed/total, and the campaign bar counts the whole tree
+- A card with every milestone done shows as researched. A card still waiting on an earlier one is marked awaiting
 - Drag a card into another era column to rearrange it
-- Drag from the gold notch on the right of a card to the left of another to draw a “leads to” link
-- Select a link and remove it
+- Click Link on a card, then click the card it leads to. Or open a card and pick from the Leads to list
+- Drag the labeled gold handle if you prefer to draw the link by hand
+- Select a link and remove it, or remove it from the card’s Leads to list
 
 ## Limits
 
