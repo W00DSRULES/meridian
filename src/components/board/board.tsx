@@ -687,7 +687,7 @@ function BoardCanvas() {
       </div>
 
       <NameDialog
-        key={nameDialogKey}
+        key={`name-${nameDialogKey}`}
         open={nameDialogOpen}
         required={!displayName}
         initialName={displayName ?? ""}
@@ -695,7 +695,7 @@ function BoardCanvas() {
         onSave={saveName}
       />
       <CapabilityDialog
-        key={formKey}
+        key={`capability-${formKey}`}
         open={dialogOpen}
         mode={dialogMode}
         seed={seed}
