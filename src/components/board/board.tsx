@@ -573,8 +573,8 @@ function BoardCanvas() {
       focusable: false,
       deletable: false,
       className: "nodrag nopan",
-      zIndex: 0,
-      style: { width: PLAQUE_WIDTH, height: PLAQUE_HEIGHT },
+      zIndex: 4,
+      style: { width: PLAQUE_WIDTH, height: PLAQUE_HEIGHT, visibility: "visible" },
     }));
     const rules: RuleFlowNode[] = eras.slice(0, -1).map((_, index) => {
       const x = columnX(index);
@@ -590,7 +590,7 @@ function BoardCanvas() {
         focusable: false,
         deletable: false,
         zIndex: 0,
-        style: { width: 1, height: 2200, pointerEvents: "none" },
+        style: { width: 1, height: 2200, pointerEvents: "none", visibility: "visible" },
       };
     });
     return [...rules, ...eraNodes, ...caps];
@@ -714,6 +714,13 @@ function BoardCanvas() {
       </header>
 
       <div className="relative min-h-0 flex-1">
+        <style>{`
+          .meridian-flow .react-flow__node-era {
+            z-index: 4 !important;
+            pointer-events: all !important;
+            visibility: visible !important;
+          }
+        `}</style>
         <ReactFlow<MeridianNode>
           className="meridian-flow"
           nodes={flowNodes}

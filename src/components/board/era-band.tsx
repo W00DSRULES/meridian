@@ -66,7 +66,9 @@ export function EraBand({ data }: NodeProps<EraFlowNode>) {
       ) : (
         <button type="button" className="era-name" onClick={() => { setDraft(data.title); setEditing(true); }}>
           <span className="era-numeral">{data.numeral}</span>
-          <span className="era-title">{data.title}</span>
+          <span className="era-title" style={{ fontSize: 20, fontWeight: 600, letterSpacing: "0.01em" }}>
+            {data.title}
+          </span>
         </button>
       )}
       <button
