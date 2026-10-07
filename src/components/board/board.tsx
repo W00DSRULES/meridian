@@ -104,6 +104,8 @@ function toFlowEdge(edge: BoardEdge, selected: boolean): Edge {
     id: edge.id,
     source: edge.source,
     target: edge.target,
+    sourceHandle: "out",
+    targetHandle: "in",
     selected,
     zIndex: 2,
     ...edgeDefaults,
@@ -163,6 +165,7 @@ function BoardCanvas() {
   const writesRef = useRef(0);
   const draggingRef = useRef<string | null>(null);
   const didFitRef = useRef(false);
+  const refreshGen = useRef(0);
 
   const applySnapshot = useCallback((board: BoardSnapshot) => {
     if (board.unchanged) return;
@@ -216,11 +219,13 @@ function BoardCanvas() {
   }, [fitView, setCaps, setCenter, setEdges]);
 
   const refresh = useCallback(async (initial: boolean) => {
+    const generation = ++refreshGen.current;
     try {
       const response = await fetch(`/api/board?revision=${revisionRef.current}`, {
         cache: "no-store",
       });
       const data = (await response.json().catch(() => null)) as BoardSnapshot | { error?: string } | null;
+      if (generation !== refreshGen.current) return;
       if (!response.ok) {
         throw new Error(data && "error" in data && data.error ? data.error : "The shared board didn't answer.");
       }
@@ -229,7 +234,12 @@ function BoardCanvas() {
       if (!initial) setSyncError(null);
       setStatus("ready");
     } catch (error) {
-      const message = error instanceof Error ? error.message : "The shared board didn't answer.";
+      if (generation !== refreshGen.current) return;
+      const raw = error instanceof Error ? error.message : "";
+      const message =
+        raw === "Failed to fetch" || raw === "Load failed"
+          ? "The shared board didn't answer. It may be restarting — try again in a moment."
+          : raw || "The shared board didn't answer.";
       if (initial && revisionRef.current < 0) {
         setLoadError(message);
         setStatus("error");

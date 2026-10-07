@@ -61,12 +61,14 @@ export function CapabilityNode({ data, selected }: NodeProps<CapabilityFlowNode>
         </div>
       </div>
       <Handle
+        id="in"
         type="target"
         position={Position.Left}
         title="Drop a prerequisite here"
         className="meridian-handle"
       />
       <Handle
+        id="out"
         type="source"
         position={Position.Right}
         title="Drag to what this leads to"
