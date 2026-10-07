@@ -48,6 +48,12 @@ export const PROFICIENCY_MARK: Record<Proficiency, string> = {
   neutral: "🤷",
 };
 
+export const PROFICIENCY_CAPTION: Record<Proficiency, string> = {
+  good: "Good at this",
+  bad: "Weak here",
+  neutral: "Neutral",
+};
+
 export const PROFICIENCY_META: Record<
   Proficiency,
   { label: string; stripe: string; ink: string; hint: string }

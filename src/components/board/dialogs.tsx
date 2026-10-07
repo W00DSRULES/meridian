@@ -18,8 +18,8 @@ import { Textarea } from "@/components/ui/textarea";
 import {
   COMMITMENT_META,
   LIMITS,
+  PROFICIENCY_CAPTION,
   PROFICIENCY_MARK,
-  PROFICIENCY_META,
   milestoneCounts,
   normalizeText,
   validateCapability,
@@ -448,18 +448,49 @@ export function CapabilityDialog({
               onChange={(event) => setDraft((current) => ({ ...current, detail: event.target.value }))}
             />
           </div>
-          <div className="tech-emoji-row" role="group" aria-label="Proficiency">
+          <div
+            className="tech-emoji-row"
+            role="group"
+            aria-label="Proficiency"
+            style={{ display: "flex", alignItems: "flex-start", gap: 18 }}
+          >
             {PROFICIENCIES.map((value) => (
               <button
                 key={value}
                 type="button"
                 aria-pressed={draft.proficiency === value}
-                aria-label={PROFICIENCY_META[value].label}
-                className="tech-emoji"
+                className="tech-emoji-option"
                 data-selected={draft.proficiency === value ? "true" : "false"}
+                style={{
+                  display: "flex",
+                  width: "5.6rem",
+                  flexDirection: "column",
+                  alignItems: "center",
+                  gap: 6,
+                  border: 0,
+                  background: "transparent",
+                  padding: 0,
+                  color: "#d5deea",
+                  cursor: "pointer",
+                }}
                 onClick={() => setDraft((current) => ({ ...current, proficiency: value }))}
               >
-                {PROFICIENCY_MARK[value]}
+                <span className="tech-emoji" data-selected={draft.proficiency === value ? "true" : "false"} aria-hidden="true">
+                  {PROFICIENCY_MARK[value]}
+                </span>
+                <span
+                  className="tech-emoji-caption"
+                  style={{
+                    color: draft.proficiency === value ? "#f6f0e6" : "#e7d7b8",
+                    fontSize: 14,
+                    fontWeight: 600,
+                    lineHeight: 1.2,
+                    textAlign: "center",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {PROFICIENCY_CAPTION[value]}
+                </span>
               </button>
             ))}
           </div>
