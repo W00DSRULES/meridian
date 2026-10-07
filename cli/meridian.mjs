@@ -94,6 +94,8 @@ if (process.env.MERIDIAN_CLI_READY !== "1") {
   process.exit(result.status === null ? 1 : result.status);
 }
 
+const envFromFile = new Set();
+
 loadEnv(fileURLToPath(new URL("../.env", import.meta.url)));
 loadEnv(fileURLToPath(new URL("../.env.local", import.meta.url)));
 
@@ -131,8 +133,6 @@ try {
   const message = error instanceof Error ? error.message : "The request failed.";
   finish(false, message, code);
 }
-
-const envFromFile = new Set();
 
 function loadEnv(file) {
   if (!existsSync(file)) return;
