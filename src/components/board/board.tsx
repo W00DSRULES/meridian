@@ -6,7 +6,6 @@ import {
   BackgroundVariant,
   Controls,
   MarkerType,
-  MiniMap,
   ReactFlow,
   ReactFlowProvider,
   useEdgesState,
@@ -40,19 +39,19 @@ import {
   NameDialog,
   type CapabilityDraft,
 } from "@/components/board/dialogs";
-import { EraBand, type EraFlowNode } from "@/components/board/era-band";
+import { ColumnRule, EraBand, type EraFlowNode, type RuleFlowNode } from "@/components/board/era-band";
 import {
   BAND_OFFSET_X,
-  COLUMNS,
-  COLUMN_X,
   FIRST_NODE_Y,
   NODE_STEP_Y,
   NODE_WIDTH,
   PLAQUE_HEIGHT,
   PLAQUE_WIDTH,
+  columnX,
   milestoneCounts,
   nearestColumnIndex,
   progressPaint,
+  roman,
   snapX,
 } from "@/lib/board-model";
 import {
@@ -62,24 +61,26 @@ import {
   subscribeDisplayName,
   useClientReady,
 } from "@/lib/display-name";
-import type { BoardEdge, BoardNode, BoardSnapshot, Milestone } from "@/lib/types";
+import type { BoardEdge, BoardEra, BoardNode, BoardSnapshot, Milestone } from "@/lib/types";
 
-type MeridianNode = CapabilityFlowNode | EraFlowNode;
+type MeridianNode = CapabilityFlowNode | EraFlowNode | RuleFlowNode;
 
 const nodeTypes: NodeTypes = {
   capability: CapabilityNode,
   era: EraBand,
+  rule: ColumnRule,
 };
 
 const edgeDefaults = {
-  type: "smoothstep" as const,
-  interactionWidth: 22,
-  style: { stroke: "#e0c088", strokeWidth: 2 },
+  type: "step" as const,
+  interactionWidth: 14,
+  pathOptions: { borderRadius: 0, offset: 8 },
+  style: { stroke: "#8d7350", strokeWidth: 1.75 },
   markerEnd: {
     type: MarkerType.ArrowClosed,
-    color: "#e0c088",
-    width: 18,
-    height: 18,
+    color: "#8d7350",
+    width: 12,
+    height: 12,
   },
 };
 
@@ -95,6 +96,7 @@ function toCapabilityNode(node: BoardNode, selected: boolean): CapabilityFlowNod
       glyph: node.glyph,
       proficiency: node.proficiency,
       commitment: node.commitment,
+      eraId: node.eraId,
       author: node.author,
       milestones: node.milestones,
     },
@@ -118,16 +120,22 @@ function toFlowEdge(edge: BoardEdge, selected: boolean): Edge {
   };
 }
 
-function settlePosition(x: number, y: number, selfId: string, nodes: CapabilityFlowNode[]) {
-  const snappedX = snapX(x);
-  let nextY = Math.max(36, Math.round(y));
+function settlePosition(
+  x: number,
+  y: number,
+  selfId: string,
+  nodes: CapabilityFlowNode[],
+  columnCount: number,
+) {
+  const snappedX = snapX(x, columnCount);
+  let nextY = Math.max(FIRST_NODE_Y, Math.round(y));
   const others = nodes.filter(
     (node) => node.id !== selfId && Math.abs(node.position.x - snappedX) < 8,
   );
   let guard = 0;
-  while (others.some((node) => Math.abs(node.position.y - nextY) < 220) && guard < 24) {
+  while (others.some((node) => Math.abs(node.position.y - nextY) < 48) && guard < 24) {
     const blocker = others
-      .filter((node) => Math.abs(node.position.y - nextY) < 220)
+      .filter((node) => Math.abs(node.position.y - nextY) < 48)
       .sort((a, b) => a.position.y - b.position.y)[0];
     nextY = Math.round((blocker?.position.y ?? nextY) + NODE_STEP_Y);
     guard += 1;
@@ -144,7 +152,7 @@ export function Board() {
 }
 
 function BoardCanvas() {
-  const { fitView, setCenter } = useReactFlow();
+  const { setCenter, setViewport } = useReactFlow();
   const [caps, setCaps, onCapsChange] = useNodesState<CapabilityFlowNode>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
@@ -163,6 +171,7 @@ function BoardCanvas() {
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<BoardNode | null>(null);
+  const [eras, setEras] = useState<BoardEra[]>([]);
   const [activeColumn, setActiveColumn] = useState<number | null>(null);
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
   const [flashId, setFlashId] = useState<string | null>(null);
@@ -202,12 +211,17 @@ function BoardCanvas() {
       setSelectedEdgeId((current) =>
         current && board.edges.some((edge) => edge.id === current) ? current : null,
       );
+      setEras(board.eras ?? []);
     }
     if (!didFitRef.current && board.nodes.length > 0) {
       didFitRef.current = true;
-      const focus = board.nodes.map((node) => ({ id: node.id }));
+      const eraCount = Math.max(1, board.eras?.length ?? 1);
       window.setTimeout(() => {
-        void fitView({ nodes: focus, padding: 0.28, maxZoom: 1, duration: 350 });
+        const pane = document.querySelector(".meridian-flow");
+        const width = pane?.clientWidth ?? 1280;
+        const span = columnX(eraCount - 1) + NODE_WIDTH - columnX(0);
+        const zoom = Math.min(1.12, Math.max(0.22, (width - 28) / (span + 8)));
+        void setViewport({ x: 10, y: 6, zoom }, { duration: 0 });
       }, 40);
     }
     if (board.focusId) {
@@ -223,7 +237,7 @@ function BoardCanvas() {
     }
     setStatus("ready");
     setSyncError(null);
-  }, [fitView, setCaps, setCenter, setEdges]);
+  }, [setCaps, setCenter, setEdges, setViewport]);
 
   const refresh = useCallback(async (initial: boolean) => {
     const generation = ++refreshGen.current;
@@ -315,7 +329,7 @@ function BoardCanvas() {
     }
     setDialogMode("create");
     setEditingId(null);
-    setSeed(EMPTY_DRAFT);
+    setSeed({ ...EMPTY_DRAFT, eraId: eras[0]?.id ?? "" });
     setFormError(null);
     setFormKey((key) => key + 1);
     setDialogOpen(true);
@@ -330,6 +344,7 @@ function BoardCanvas() {
       detail: node.data.detail,
       proficiency: node.data.proficiency,
       commitment: node.data.commitment,
+      eraId: node.data.eraId,
       milestones: [],
     });
     setFormError(null);
@@ -344,25 +359,13 @@ function BoardCanvas() {
     try {
       const payload = { ...draft, author: displayName };
       if (dialogMode === "create") {
-        const column = caps.reduce(
-          (counts, node) => {
-            counts[nearestColumnIndex(node.position.x)] += 1;
-            return counts;
-          },
-          [0, 0, 0, 0],
-        );
-        let index = 0;
-        for (let cursor = 1; cursor < column.length; cursor += 1) {
-          if (column[cursor] < column[index]) index = cursor;
-        }
         await send("/api/nodes", "POST", {
           ...payload,
+          eraId: draft.eraId || eras[0]?.id,
           milestones: draft.milestones.map((milestone) => ({
             name: milestone.name,
             done: milestone.done,
           })),
-          x: COLUMN_X[index],
-          y: FIRST_NODE_Y + column[index] * NODE_STEP_Y,
         });
       } else if (editingId) {
         await send(`/api/nodes/${editingId}`, "PATCH", {
@@ -480,18 +483,49 @@ function BoardCanvas() {
       .map((element) => (element instanceof Element ? element.closest(".react-flow__node") : null))
       .find((element): element is Element => element !== null);
     const targetId = host?.getAttribute("data-id") ?? "";
-    if (!targetId || targetId === fromId || targetId.startsWith("era-")) return;
+    if (!targetId || targetId === fromId || targetId.startsWith("era-") || targetId.startsWith("rule-")) return;
     if (connectionState.isValid && connectionState.toNode?.id === targetId) return;
     void persistEdge(fromId, targetId).catch(failLink);
   };
 
+  function renameEra(id: string, name: string) {
+    const author = requireName();
+    if (!author) return;
+    void send(`/api/eras/${id}`, "PATCH", { name, author }).catch((error: unknown) => {
+      note(error instanceof Error ? error.message : "Couldn't rename that era.");
+    });
+  }
+
+  function shiftEra(id: string, direction: -1 | 1) {
+    const author = requireName();
+    if (!author) return;
+    void send(`/api/eras/${id}`, "PATCH", { direction, author }).catch((error: unknown) => {
+      note(error instanceof Error ? error.message : "Couldn't reorder that era.");
+    });
+  }
+
+  function addEra() {
+    const author = requireName();
+    if (!author) return;
+    void send("/api/eras", "POST", { name: "New era", author }).catch((error: unknown) => {
+      note(error instanceof Error ? error.message : "Couldn't add that era.");
+    });
+  }
+
+  async function changeEra(eraId: string) {
+    if (!editingId) return;
+    const author = requireName();
+    if (!author) throw new Error("Add your name before changing the board.");
+    await send(`/api/nodes/${editingId}`, "PATCH", { eraId, author });
+  }
+
   const onNodeDragStart: OnNodeDrag<MeridianNode> = (_event, node) => {
     draggingRef.current = node.id;
-    setActiveColumn(nearestColumnIndex(node.position.x));
+    setActiveColumn(nearestColumnIndex(node.position.x, eras.length));
   };
 
   const onNodeDrag: OnNodeDrag<MeridianNode> = (_event, node) => {
-    setActiveColumn(nearestColumnIndex(node.position.x));
+    setActiveColumn(nearestColumnIndex(node.position.x, eras.length));
   };
 
   const onNodeDragStop: OnNodeDrag<MeridianNode> = (_event, node) => {
@@ -501,12 +535,11 @@ function BoardCanvas() {
       return;
     }
     const author = displayName;
-    let next = { x: node.position.x, y: node.position.y };
+    const next = settlePosition(node.position.x, node.position.y, node.id, caps, eras.length);
     draggingRef.current = node.id;
-    setCaps((current) => {
-      next = settlePosition(node.position.x, node.position.y, node.id, current);
-      return current.map((item) => (item.id === node.id ? { ...item, position: next } : item));
-    });
+    setCaps((current) =>
+      current.map((item) => (item.id === node.id ? { ...item, position: next } : item)),
+    );
     void send(`/api/nodes/${node.id}`, "PATCH", {
       x: next.x,
       y: next.y,
@@ -522,26 +555,46 @@ function BoardCanvas() {
   };
 
   const flowNodes = useMemo(() => {
-    const eras: EraFlowNode[] = COLUMNS.map((column, index) => ({
-      id: `era-${column.key}`,
+    const eraNodes: EraFlowNode[] = eras.map((era, index) => ({
+      id: `era-${era.id}`,
       type: "era",
-      position: { x: COLUMN_X[index] + BAND_OFFSET_X, y: 16 },
+      position: { x: columnX(index) + BAND_OFFSET_X, y: 8 },
       data: {
-        numeral: column.numeral,
-        title: column.title,
-        blurb: column.blurb,
+        eraId: era.id,
+        numeral: roman(index),
+        title: era.name,
         hot: activeColumn === index,
+        first: index === 0,
+        last: index === eras.length - 1,
       },
       draggable: false,
       selectable: false,
       connectable: false,
       focusable: false,
       deletable: false,
+      className: "nodrag nopan",
       zIndex: 0,
-      style: { width: PLAQUE_WIDTH, height: PLAQUE_HEIGHT, pointerEvents: "none" },
+      style: { width: PLAQUE_WIDTH, height: PLAQUE_HEIGHT },
     }));
-    return [...eras, ...caps];
-  }, [activeColumn, caps]);
+    const rules: RuleFlowNode[] = eras.slice(0, -1).map((_, index) => {
+      const x = columnX(index);
+      const next = columnX(index + 1);
+      return {
+        id: `rule-${index}`,
+        type: "rule",
+        position: { x: x + NODE_WIDTH + Math.round((next - x - NODE_WIDTH) / 2), y: 0 },
+        data: {},
+        draggable: false,
+        selectable: false,
+        connectable: false,
+        focusable: false,
+        deletable: false,
+        zIndex: 0,
+        style: { width: 1, height: 2200, pointerEvents: "none" },
+      };
+    });
+    return [...rules, ...eraNodes, ...caps];
+  }, [activeColumn, caps, eras]);
 
   const campaign = useMemo(() => {
     return caps.reduce(
@@ -608,7 +661,7 @@ function BoardCanvas() {
   }
 
   return (
-    <BoardChrome.Provider value={{ flashId, awaitingIds }}>
+    <BoardChrome.Provider value={{ flashId, awaitingIds, renameEra, shiftEra, addEra }}>
     <div className="meridian-shell flex h-dvh min-h-0 flex-col text-[#f4efe6]">
       <header className="z-20 border-b border-[#e0c088]/25 bg-[#071422]/90 px-3 py-3 sm:px-5">
         <div className="flex flex-wrap items-center justify-between gap-3">
@@ -621,7 +674,7 @@ function BoardCanvas() {
               </span>
             </div>
             <p className="max-w-xl text-xs leading-relaxed text-[#9aa6b2] sm:text-sm">
-              Drag from the side of a card onto the one it leads to. Open a card for the writeup and the milestones.
+              Pull from the side of a bar onto the one it leads to. Open a bar for the writeup and the milestones.
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -669,7 +722,9 @@ function BoardCanvas() {
           onNodesChange={(changes) => {
             onCapsChange(
               changes.filter(
-                (change) => !("id" in change) || !change.id.startsWith("era-"),
+                (change) =>
+                  !("id" in change) ||
+                  (!change.id.startsWith("era-") && !change.id.startsWith("rule-")),
               ) as NodeChange<CapabilityFlowNode>[],
             );
           }}
@@ -699,8 +754,8 @@ function BoardCanvas() {
             );
           }}
           fitView={false}
-          defaultViewport={{ x: 16, y: 12, zoom: 0.9 }}
-          minZoom={0.35}
+          defaultViewport={{ x: 10, y: 6, zoom: 1 }}
+          minZoom={0.2}
           maxZoom={1.4}
           connectionRadius={36}
           deleteKeyCode={null}
@@ -714,22 +769,8 @@ function BoardCanvas() {
           proOptions={{ hideAttribution: false }}
           aria-label="Shared capability tree"
         >
-          <Background variant={BackgroundVariant.Dots} gap={28} size={1} color="rgba(224,192,136,0.14)" />
+          <Background variant={BackgroundVariant.Dots} gap={22} size={1.1} color="rgba(150,176,204,0.16)" />
           <Controls showInteractive={false} position="bottom-right" />
-          <MiniMap
-            pannable
-            zoomable
-            position="bottom-left"
-            bgColor="#071422"
-            maskColor="rgba(7,20,34,0.72)"
-            nodeColor={(node) => {
-              if (node.type !== "capability") return "transparent";
-              const data = node.data as CapabilityFlowNode["data"];
-              const counts = milestoneCounts(data.milestones);
-              return progressPaint(counts.done, counts.total).frame;
-            }}
-            nodeStrokeWidth={0}
-          />
         </ReactFlow>
 
         {celebration ? (
@@ -812,6 +853,9 @@ function BoardCanvas() {
         glyph={caps.find((node) => node.id === editingId)?.data.glyph ?? "compass"}
         author={displayName ?? ""}
         milestones={caps.find((node) => node.id === editingId)?.data.milestones ?? []}
+        eras={eras}
+        eraId={caps.find((node) => node.id === editingId)?.data.eraId ?? seed.eraId}
+        onChangeEra={changeEra}
         saving={saving}
         error={formError}
         onOpenChange={setDialogOpen}
@@ -869,6 +913,7 @@ function boardNodeFromFlow(node: CapabilityFlowNode): BoardNode {
     proficiency: node.data.proficiency,
     milestones: node.data.milestones,
     commitment: node.data.commitment,
+    eraId: node.data.eraId,
     author: node.data.author,
     x: node.position.x,
     y: node.position.y,

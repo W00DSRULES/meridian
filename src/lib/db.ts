@@ -4,10 +4,12 @@ import Database from "better-sqlite3";
 import { EXAMPLE_LINKS, EXAMPLE_NODES } from "@/lib/examples";
 import {
   COLUMN_X,
+  DEFAULT_ERAS,
   FIRST_NODE_Y,
   LIMITS,
   NODE_STEP_Y,
   clamp,
+  columnX,
   glyphForIndex,
   isCommitment,
   isGlyph,
@@ -18,11 +20,13 @@ import {
   snapX,
   validateCapability,
   validateDetail,
+  validateEraName,
   validateIdentity,
   validateMilestoneName,
 } from "@/lib/board-model";
 import type {
   BoardEdge,
+  BoardEra,
   BoardNode,
   BoardSnapshot,
   Commitment,
@@ -43,6 +47,7 @@ type NodeRow = {
   proficiency: string;
   commitment: string;
   author: string;
+  era_id: string | null;
   x: number;
   y: number;
   created_at: number;
@@ -166,6 +171,16 @@ function migrate(db: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS milestones_node ON milestones(node_id, position);
   `);
+  if (!columnNames(db, "nodes").has("era_id")) {
+    db.exec("ALTER TABLE nodes ADD COLUMN era_id TEXT");
+  }
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS eras (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      position INTEGER NOT NULL
+    );
+  `);
   const seed = db.transaction(() => {
     if (metaValue(db, "content_version") < 1) {
       const count = db.prepare("SELECT COUNT(*) AS count FROM nodes").get() as { count: number };
@@ -175,11 +190,24 @@ function migrate(db: Database.Database): void {
         "INSERT INTO meta (key, value) VALUES ('content_version', 1) ON CONFLICT(key) DO UPDATE SET value = 1",
       ).run();
     }
-    if (metaValue(db, "layout_version") < 3) {
+    if (metaValue(db, "layout_version") < 5) {
       restackColumns(db);
       db.prepare(
-        "INSERT INTO meta (key, value) VALUES ('layout_version', 3) ON CONFLICT(key) DO UPDATE SET value = 3",
+        "INSERT INTO meta (key, value) VALUES ('layout_version', 5) ON CONFLICT(key) DO UPDATE SET value = 5",
       ).run();
+      bump(db);
+    }
+    const eraCount = db.prepare("SELECT COUNT(*) AS count FROM eras").get() as { count: number };
+    if (eraCount.count === 0) {
+      const insertEra = db.prepare("INSERT INTO eras (id, name, position) VALUES (?, ?, ?)");
+      DEFAULT_ERAS.forEach((era, index) => insertEra.run(era.id, era.name, index));
+      const nodes = db.prepare("SELECT id, x FROM nodes").all() as { id: string; x: number }[];
+      const assign = db.prepare("UPDATE nodes SET era_id = ? WHERE id = ?");
+      for (const node of nodes) {
+        const index = nearestColumnIndex(node.x, DEFAULT_ERAS.length);
+        assign.run(DEFAULT_ERAS[index].id, node.id);
+      }
+      placeByEra(db);
       bump(db);
     }
   });
@@ -258,7 +286,7 @@ function restackColumns(db: Database.Database): void {
   const rows = db.prepare("SELECT id, x, y FROM nodes").all() as { id: string; x: number; y: number }[];
   const columns = new Map<number, { id: string; y: number }[]>();
   for (const row of rows) {
-    const column = nearestColumnIndex(row.x);
+    const column = nearestColumnIndex(row.x, COLUMN_X.length);
     const list = columns.get(column) ?? [];
     list.push(row);
     columns.set(column, list);
@@ -270,6 +298,40 @@ function restackColumns(db: Database.Database): void {
       update.run(COLUMN_X[column], FIRST_NODE_Y + index * NODE_STEP_Y, node.id);
     });
   }
+}
+
+function listEras(db: Database.Database): BoardEra[] {
+  return db
+    .prepare("SELECT id, name, position FROM eras ORDER BY position ASC, id ASC")
+    .all() as BoardEra[];
+}
+
+function placeByEra(db: Database.Database): void {
+  const eras = listEras(db);
+  if (eras.length === 0) return;
+  const nodes = db.prepare("SELECT id, era_id, y FROM nodes").all() as {
+    id: string;
+    era_id: string | null;
+    y: number;
+  }[];
+  const update = db.prepare("UPDATE nodes SET era_id = ?, x = ?, y = ? WHERE id = ?");
+  eras.forEach((era, column) => {
+    const members = nodes
+      .filter((node) => node.era_id === era.id)
+      .sort((a, b) => a.y - b.y || a.id.localeCompare(b.id));
+    members.forEach((node, index) => {
+      update.run(era.id, columnX(column), FIRST_NODE_Y + index * NODE_STEP_Y, node.id);
+    });
+  });
+  const known = new Set(eras.map((era) => era.id));
+  const loose = nodes
+    .filter((node) => !node.era_id || !known.has(node.era_id))
+    .sort((a, b) => a.y - b.y || a.id.localeCompare(b.id));
+  const first = eras[0];
+  const used = nodes.filter((node) => node.era_id === first.id).length;
+  loose.forEach((node, index) => {
+    update.run(first.id, columnX(0), FIRST_NODE_Y + (used + index) * NODE_STEP_Y, node.id);
+  });
 }
 
 function revisionOf(db: Database.Database): number {
@@ -292,6 +354,7 @@ function mapNode(row: NodeRow, milestones: Milestone[]): BoardNode {
     glyph: isGlyph(row.glyph) ? row.glyph : "compass",
     proficiency: row.proficiency as Proficiency,
     commitment: row.commitment as Commitment,
+    eraId: row.era_id ?? DEFAULT_ERAS[0].id,
     author: row.author,
     x: row.x,
     y: row.y,
@@ -342,6 +405,7 @@ export function readBoard(): BoardSnapshot {
     revision: revisionOf(db),
     nodes: nodes.map((row) => mapNode(row, milestones.get(row.id) ?? [])),
     edges: edges.map(mapEdge),
+    eras: listEras(db),
   };
 }
 
@@ -369,17 +433,24 @@ function requirePosition(value: unknown, label: string): number {
   return label === "column" ? clamp(rounded, -400, 5000) : clamp(rounded, -400, 8000);
 }
 
-function nextSlot(db: Database.Database): { x: number; y: number } {
-  const rows = db.prepare("SELECT x, y FROM nodes").all() as { x: number; y: number }[];
-  const counts = [0, 0, 0, 0];
-  for (const row of rows) counts[nearestColumnIndex(row.x)] += 1;
-  let column = 0;
-  for (let index = 1; index < counts.length; index += 1) {
-    if (counts[index] < counts[column]) column = index;
+function nextSlot(db: Database.Database, eraId?: string): { x: number; y: number; eraId: string } {
+  const eras = listEras(db);
+  const rows = db.prepare("SELECT era_id FROM nodes").all() as { era_id: string | null }[];
+  const counts = new Map(eras.map((era) => [era.id, 0]));
+  for (const row of rows) {
+    if (row.era_id && counts.has(row.era_id)) counts.set(row.era_id, (counts.get(row.era_id) ?? 0) + 1);
   }
+  let chosen = eras.find((era) => era.id === eraId) ?? eras[0];
+  if (!eraId) {
+    for (const era of eras) {
+      if ((counts.get(era.id) ?? 0) < (counts.get(chosen.id) ?? 0)) chosen = era;
+    }
+  }
+  const count = counts.get(chosen.id) ?? 0;
   return {
-    x: COLUMN_X[column],
-    y: FIRST_NODE_Y + counts[column] * NODE_STEP_Y,
+    x: columnX(chosen.position),
+    y: FIRST_NODE_Y + count * NODE_STEP_Y,
+    eraId: chosen.id,
   };
 }
 
@@ -391,6 +462,7 @@ type NodeWrite = {
   proficiency?: Proficiency;
   commitment?: Commitment;
   author: string;
+  eraId?: string;
   x?: number;
   y?: number;
 };
@@ -432,7 +504,7 @@ function parseNodeWrite(body: unknown, partial: boolean): NodeWrite {
     record.glyph !== undefined ||
     record.proficiency !== undefined ||
     record.commitment !== undefined;
-  const touchesPosition = record.x !== undefined || record.y !== undefined;
+  const touchesPosition = record.x !== undefined || record.y !== undefined || record.eraId !== undefined;
   if (partial && !touchesContent && !touchesPosition) {
     throw new BoardRequestError(400, "Nothing on that capability changed.");
   }
@@ -480,7 +552,7 @@ function parseNodeWrite(body: unknown, partial: boolean): NodeWrite {
 
   if (!partial || record.proficiency !== undefined) {
     if (!isProficiency(record.proficiency)) {
-      throw new BoardRequestError(400, "Pick good at, bad at, or neutral.");
+      throw new BoardRequestError(400, "Pick how the team reads this.");
     }
     next.proficiency = record.proficiency;
   }
@@ -492,7 +564,8 @@ function parseNodeWrite(body: unknown, partial: boolean): NodeWrite {
     next.commitment = record.commitment;
   }
 
-  if (record.x !== undefined) next.x = snapX(requirePosition(record.x, "column"));
+  if (typeof record.eraId === "string") next.eraId = requireId(record.eraId);
+  if (record.x !== undefined) next.x = requirePosition(record.x, "column");
   if (record.y !== undefined) next.y = requirePosition(record.y, "row");
 
   return next;
@@ -518,16 +591,20 @@ export function createNode(body: unknown): BoardSnapshot {
     if (count.count >= LIMITS.nodes) {
       throw new BoardRequestError(400, "This board is full. Remove a capability before adding another.");
     }
-    const slot = nextSlot(db);
-    const x = input.x ?? slot.x;
+    const slot = nextSlot(db, input.eraId);
+    const eras = listEras(db);
+    const era = eras.find((item) => item.id === slot.eraId) ?? eras[0];
+    const x = input.eraId ? slot.x : snapX(input.x ?? slot.x, eras.length);
+    const column = nearestColumnIndex(x, eras.length);
+    const eraId = input.eraId ? slot.eraId : (eras[column]?.id ?? era.id);
     const y = input.y ?? slot.y;
     focusId = crypto.randomUUID();
     const now = Date.now();
     db.prepare(
       `INSERT INTO nodes (
-        id, title, description, detail, glyph, proficiency, commitment, author, x, y, created_at, updated_at
+        id, title, description, detail, glyph, proficiency, commitment, author, era_id, x, y, created_at, updated_at
       ) VALUES (
-        @id, @title, @description, @detail, @glyph, @proficiency, @commitment, @author, @x, @y, @created_at, @updated_at
+        @id, @title, @description, @detail, @glyph, @proficiency, @commitment, @author, @era_id, @x, @y, @created_at, @updated_at
       )`,
     ).run({
       id: focusId,
@@ -538,7 +615,8 @@ export function createNode(body: unknown): BoardSnapshot {
       proficiency: input.proficiency,
       commitment: input.commitment,
       author: input.author,
-      x: snapX(x),
+      era_id: eraId,
+      x: columnX(Math.max(0, eras.findIndex((item) => item.id === eraId))),
       y,
       created_at: now,
       updated_at: now,
@@ -559,6 +637,27 @@ export function updateNode(id: string, body: unknown): BoardSnapshot {
     if (!existing) {
       throw new BoardRequestError(404, "That capability is no longer on the board.");
     }
+    const eras = listEras(db);
+    let eraId = input.eraId ?? existing.era_id ?? eras[0]?.id;
+    let x = input.x ?? existing.x;
+    let y = input.y ?? existing.y;
+    if (input.eraId && input.eraId !== existing.era_id) {
+      const era = eras.find((item) => item.id === input.eraId);
+      if (!era) throw new BoardRequestError(400, "That era isn't on the board.");
+      const siblings = db
+        .prepare("SELECT COUNT(*) AS count FROM nodes WHERE era_id = ? AND id != ?")
+        .get(era.id, nodeId) as { count: number };
+      eraId = era.id;
+      x = columnX(Math.max(0, eras.findIndex((item) => item.id === era.id)));
+      y = FIRST_NODE_Y + siblings.count * NODE_STEP_Y;
+    } else if (input.x !== undefined) {
+      const index = nearestColumnIndex(input.x, eras.length);
+      const era = eras[index];
+      if (era) {
+        eraId = era.id;
+        x = columnX(index);
+      }
+    }
     const now = Date.now();
     db.prepare(
       `UPDATE nodes SET
@@ -569,6 +668,7 @@ export function updateNode(id: string, body: unknown): BoardSnapshot {
         proficiency = @proficiency,
         commitment = @commitment,
         author = @author,
+        era_id = @era_id,
         x = @x,
         y = @y,
         updated_at = @updated_at
@@ -582,8 +682,9 @@ export function updateNode(id: string, body: unknown): BoardSnapshot {
       proficiency: input.proficiency ?? existing.proficiency,
       commitment: input.commitment ?? existing.commitment,
       author: input.author,
-      x: input.x ?? existing.x,
-      y: input.y ?? existing.y,
+      era_id: eraId,
+      x,
+      y,
       updated_at: now,
     });
     bump(db);
@@ -641,6 +742,73 @@ export function createEdge(body: unknown): BoardSnapshot {
       `INSERT INTO edges (id, source, target, author, created_at)
        VALUES (?, ?, ?, ?, ?)`,
     ).run(crypto.randomUUID(), source, target, author, Date.now());
+    bump(db);
+  });
+  run();
+  return readBoard();
+}
+
+export function createEra(body: unknown): BoardSnapshot {
+  if (!body || typeof body !== "object") {
+    throw new BoardRequestError(400, "That request was empty.");
+  }
+  const record = body as Record<string, unknown>;
+  requireAuthor(record.author);
+  const db = openDb();
+  const run = db.transaction(() => {
+    const eras = listEras(db);
+    if (eras.length >= LIMITS.eras) {
+      throw new BoardRequestError(400, "The board already has as many eras as it can hold.");
+    }
+    const requested = typeof record.name === "string" ? record.name : "New era";
+    let name = normalizeText(requested) || "New era";
+    const message = validateEraName(name);
+    if (message) throw new BoardRequestError(400, message);
+    const taken = new Set(eras.map((era) => era.name.toLowerCase()));
+    if (taken.has(name.toLowerCase())) {
+      let suffix = 2;
+      while (taken.has(`${name} ${suffix}`.toLowerCase()) && suffix < 20) suffix += 1;
+      name = `${name} ${suffix}`;
+    }
+    db.prepare("INSERT INTO eras (id, name, position) VALUES (?, ?, ?)").run(
+      crypto.randomUUID(),
+      name,
+      eras.length,
+    );
+    bump(db);
+  });
+  run();
+  return readBoard();
+}
+
+export function updateEra(id: string, body: unknown): BoardSnapshot {
+  const eraId = requireId(id);
+  if (!body || typeof body !== "object") {
+    throw new BoardRequestError(400, "That request was empty.");
+  }
+  const record = body as Record<string, unknown>;
+  requireAuthor(record.author);
+  const db = openDb();
+  const run = db.transaction(() => {
+    const eras = listEras(db);
+    const index = eras.findIndex((era) => era.id === eraId);
+    if (index < 0) throw new BoardRequestError(404, "That era is no longer on the board.");
+    if (typeof record.name === "string") {
+      const message = validateEraName(record.name);
+      if (message) throw new BoardRequestError(400, message);
+      db.prepare("UPDATE eras SET name = ? WHERE id = ?").run(normalizeText(record.name), eraId);
+    }
+    if (record.direction === -1 || record.direction === 1) {
+      const next = index + record.direction;
+      if (next >= 0 && next < eras.length) {
+        const other = eras[next];
+        const current = eras[index];
+        const swap = db.prepare("UPDATE eras SET position = ? WHERE id = ?");
+        swap.run(other.position, current.id);
+        swap.run(current.position, other.id);
+        placeByEra(db);
+      }
+    }
     bump(db);
   });
   run();

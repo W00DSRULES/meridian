@@ -8,45 +8,45 @@ export const LIMITS = {
   milestoneName: 80,
   milestones: 12,
   author: 40,
+  eraName: 24,
+  eras: 8,
   nodes: 300,
   edges: 600,
 } as const;
 
-export const NODE_WIDTH = 232;
-export const PLAQUE_WIDTH = 210;
-export const PLAQUE_HEIGHT = 78;
-export const COLUMN_X = [48, 388, 728, 1068] as const;
-export const BAND_WIDTH = PLAQUE_WIDTH;
-export const BAND_OFFSET_X = Math.round((NODE_WIDTH - PLAQUE_WIDTH) / 2);
-export const FIRST_NODE_Y = 140;
-export const NODE_STEP_Y = 268;
+export const NODE_WIDTH = 308;
+export const PLAQUE_WIDTH = NODE_WIDTH;
+export const PLAQUE_HEIGHT = 40;
+export const COLUMN_GAP = 48;
 
-export const COLUMNS = [
-  {
-    key: "foundations",
-    numeral: "I",
-    title: "Foundations",
-    blurb: "What later work stands on",
-  },
-  {
-    key: "practice",
-    numeral: "II",
-    title: "Practice",
-    blurb: "How the work actually gets done",
-  },
-  {
-    key: "reach",
-    numeral: "III",
-    title: "Reach",
-    blurb: "Where it meets the customer",
-  },
-  {
-    key: "horizon",
-    numeral: "IV",
-    title: "Horizon",
-    blurb: "The natural thing after this",
-  },
+export function columnX(index: number): number {
+  return 8 + index * (NODE_WIDTH + COLUMN_GAP);
+}
+
+export const COLUMN_X = [columnX(0), columnX(1), columnX(2), columnX(3)] as const;
+export const BAND_WIDTH = PLAQUE_WIDTH;
+export const BAND_OFFSET_X = 0;
+export const FIRST_NODE_Y = 56;
+export const NODE_STEP_Y = 56;
+
+export const DEFAULT_ERAS = [
+  { id: "11111111-1111-4111-8111-111111111111", name: "MVP" },
+  { id: "22222222-2222-4222-8222-222222222222", name: "Traction" },
+  { id: "33333333-3333-4333-8333-333333333333", name: "Scale" },
+  { id: "44444444-4444-4444-8444-444444444444", name: "Horizon" },
 ] as const;
+
+const ROMAN = ["I", "II", "III", "IV", "V", "VI", "VII", "VIII"] as const;
+
+export function roman(index: number): string {
+  return ROMAN[index] ?? String(index + 1);
+}
+
+export const PROFICIENCY_MARK: Record<Proficiency, string> = {
+  good: "🔥",
+  bad: "🫠",
+  neutral: "🤷",
+};
 
 export const PROFICIENCY_META: Record<
   Proficiency,
@@ -219,21 +219,29 @@ export function validateMilestoneName(name: string): string | null {
   return null;
 }
 
-export function nearestColumnIndex(x: number): number {
+export function validateEraName(name: string): string | null {
+  const cleaned = normalizeText(name);
+  if (cleaned.length === 0) return "Name this era.";
+  if (cleaned.length > LIMITS.eraName) return "Era names stay under 24 characters.";
+  return null;
+}
+
+export function nearestColumnIndex(x: number, count: number = COLUMN_X.length): number {
+  const columns = Math.max(1, count);
   let best = 0;
   let bestDistance = Number.POSITIVE_INFINITY;
-  COLUMN_X.forEach((columnX, index) => {
-    const distance = Math.abs(x - columnX);
+  for (let index = 0; index < columns; index += 1) {
+    const distance = Math.abs(x - columnX(index));
     if (distance < bestDistance) {
       best = index;
       bestDistance = distance;
     }
-  });
+  }
   return best;
 }
 
-export function snapX(x: number): number {
-  return COLUMN_X[nearestColumnIndex(x)];
+export function snapX(x: number, count: number = COLUMN_X.length): number {
+  return columnX(nearestColumnIndex(x, count));
 }
 
 export function clamp(value: number, min: number, max: number): number {

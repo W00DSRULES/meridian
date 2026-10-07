@@ -18,6 +18,7 @@ import { Textarea } from "@/components/ui/textarea";
 import {
   COMMITMENT_META,
   LIMITS,
+  PROFICIENCY_MARK,
   PROFICIENCY_META,
   milestoneCounts,
   normalizeText,
@@ -29,6 +30,7 @@ import {
 import {
   COMMITMENTS,
   PROFICIENCIES,
+  type BoardEra,
   type Commitment,
   type Glyph,
   type Milestone,
@@ -47,6 +49,7 @@ export type CapabilityDraft = {
   detail: string;
   proficiency: Proficiency;
   commitment: Commitment;
+  eraId: string;
   milestones: DraftMilestone[];
 };
 
@@ -56,6 +59,7 @@ export const EMPTY_DRAFT: CapabilityDraft = {
   detail: "",
   proficiency: "neutral",
   commitment: "next",
+  eraId: "",
   milestones: [],
 };
 
@@ -145,6 +149,9 @@ export function CapabilityDialog({
   glyph,
   author,
   milestones,
+  eras,
+  eraId,
+  onChangeEra,
   saving,
   error,
   onOpenChange,
@@ -166,6 +173,9 @@ export function CapabilityDialog({
   glyph: Glyph;
   author: string;
   milestones: Milestone[];
+  eras: BoardEra[];
+  eraId: string;
+  onChangeEra?: (eraId: string) => Promise<void>;
   saving: boolean;
   error: string | null;
   onOpenChange: (open: boolean) => void;
@@ -214,6 +224,23 @@ export function CapabilityDialog({
       detail: draft.detail.trim(),
       milestones: pending.map((milestone) => ({ ...milestone, name: normalizeText(milestone.name) })),
     });
+  }
+
+  async function pickEra(id: string) {
+    if (mode === "create") {
+      setDraft((current) => ({ ...current, eraId: id }));
+      return;
+    }
+    if (!onChangeEra || id === eraId) return;
+    setLocalError(null);
+    setBusyId("era");
+    try {
+      await onChangeEra(id);
+    } catch (caught) {
+      setLocalError(caught instanceof Error ? caught.message : "Couldn't move that into the era.");
+    } finally {
+      setBusyId(null);
+    }
   }
 
   async function addLink() {
@@ -370,14 +397,19 @@ export function CapabilityDialog({
             <Label htmlFor="capability-title" className="text-[10px] tracking-[0.18em] text-[#e0c088] uppercase">
               Title
             </Label>
-            <Input
-              id="capability-title"
-              value={draft.title}
-              maxLength={LIMITS.title}
-              placeholder="Discovery calls"
-              className="font-display h-auto border-[#e0c088]/30 bg-[#0b1626] px-3 py-2 text-2xl text-[#f6f0e6]"
-              onChange={(event) => setDraft((current) => ({ ...current, title: event.target.value }))}
-            />
+            <div className="flex items-center gap-2">
+              <span className="text-2xl leading-none" aria-hidden="true">
+                {PROFICIENCY_MARK[draft.proficiency]}
+              </span>
+              <Input
+                id="capability-title"
+                value={draft.title}
+                maxLength={LIMITS.title}
+                placeholder="Discovery calls"
+                className="font-display h-auto border-[#e0c088]/30 bg-[#0b1626] px-3 py-2 text-2xl text-[#f6f0e6]"
+                onChange={(event) => setDraft((current) => ({ ...current, title: event.target.value }))}
+              />
+            </div>
           </div>
           <div className="grid gap-1">
             <div className="flex items-center justify-between gap-2">
@@ -392,7 +424,7 @@ export function CapabilityDialog({
               id="capability-subtitle"
               value={draft.description}
               maxLength={LIMITS.description}
-              placeholder="The line that shows on the card"
+              placeholder="Shown when this tech is open"
               className="border-[#e0c088]/25 bg-[#0b1626] text-[#d5deea]"
               onChange={(event) => setDraft((current) => ({ ...current, description: event.target.value }))}
             />
@@ -416,25 +448,42 @@ export function CapabilityDialog({
               onChange={(event) => setDraft((current) => ({ ...current, detail: event.target.value }))}
             />
           </div>
-          <fieldset className="grid gap-2">
+          <div className="tech-emoji-row" role="group" aria-label="Proficiency">
+            {PROFICIENCIES.map((value) => (
+              <button
+                key={value}
+                type="button"
+                aria-pressed={draft.proficiency === value}
+                aria-label={PROFICIENCY_META[value].label}
+                className="tech-emoji"
+                data-selected={draft.proficiency === value ? "true" : "false"}
+                onClick={() => setDraft((current) => ({ ...current, proficiency: value }))}
+              >
+                {PROFICIENCY_MARK[value]}
+              </button>
+            ))}
+          </div>
+          <fieldset className="grid gap-2" data-testid="era-choice">
             <legend className="text-[10px] font-semibold tracking-[0.18em] text-[#e0c088] uppercase">
-              Proficiency
+              Era
             </legend>
-            <div className="grid grid-cols-3 gap-2">
-              {PROFICIENCIES.map((value) => (
-                <button
-                  key={value}
-                  type="button"
-                  aria-pressed={draft.proficiency === value}
-                  className="tech-swatch"
-                  data-selected={draft.proficiency === value ? "true" : "false"}
-                  data-proficiency={value}
-                  onClick={() => setDraft((current) => ({ ...current, proficiency: value }))}
-                >
-                  <span style={{ background: PROFICIENCY_META[value].stripe }} />
-                  {PROFICIENCY_META[value].label}
-                </button>
-              ))}
+            <div className="flex flex-wrap gap-2">
+              {eras.map((era) => {
+                const selected = (mode === "edit" ? eraId : draft.eraId || eras[0]?.id) === era.id;
+                return (
+                  <button
+                    key={era.id}
+                    type="button"
+                    aria-pressed={selected}
+                    className="tech-choice"
+                    data-selected={selected ? "true" : "false"}
+                    disabled={busyId === "era"}
+                    onClick={() => void pickEra(era.id)}
+                  >
+                    {era.name}
+                  </button>
+                );
+              })}
             </div>
           </fieldset>
           <fieldset className="grid gap-2">

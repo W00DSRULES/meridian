@@ -13,6 +13,12 @@ export type Milestone = {
   position: number;
 };
 
+export type BoardEra = {
+  id: string;
+  name: string;
+  position: number;
+};
+
 export type BoardNode = {
   id: string;
   title: string;
@@ -21,6 +27,7 @@ export type BoardNode = {
   glyph: Glyph;
   proficiency: Proficiency;
   commitment: Commitment;
+  eraId: string;
   author: string;
   x: number;
   y: number;
@@ -41,6 +48,7 @@ export type BoardSnapshot = {
   revision: number;
   nodes: BoardNode[];
   edges: BoardEdge[];
+  eras: BoardEra[];
   unchanged?: boolean;
   focusId?: string;
 };
