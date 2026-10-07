@@ -44,11 +44,19 @@ export type BoardEdge = {
   createdAt: number;
 };
 
+export type CampaignSummary = {
+  id: string;
+  name: string;
+  createdAt: number;
+  updatedAt: number;
+};
+
 export type BoardSnapshot = {
   revision: number;
   nodes: BoardNode[];
   edges: BoardEdge[];
   eras: BoardEra[];
+  campaign?: CampaignSummary;
   unchanged?: boolean;
   focusId?: string;
 };

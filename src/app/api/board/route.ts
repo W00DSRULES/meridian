@@ -1,10 +1,10 @@
-import { boardError, boardJson } from "@/lib/api";
+import { boardError, boardJson, campaignOf } from "@/lib/api";
 import { readBoard } from "@/lib/db";
 
 export async function GET(request: Request) {
   try {
     const url = new URL(request.url);
-    const board = readBoard();
+    const board = await readBoard(campaignOf(request));
     const known = url.searchParams.get("revision");
     if (known !== null && Number(known) === board.revision) {
       return boardJson({ revision: board.revision, unchanged: true, nodes: [], edges: [] });

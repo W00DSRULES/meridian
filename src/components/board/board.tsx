@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
+import Link from "next/link";
 import {
   Background,
   BackgroundVariant,
@@ -21,6 +22,13 @@ import {
 import { Plus } from "lucide-react";
 import "@xyflow/react/dist/style.css";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -61,6 +69,7 @@ import {
   subscribeDisplayName,
   useClientReady,
 } from "@/lib/display-name";
+import { rememberCampaign } from "@/lib/local-campaigns";
 import type { BoardEdge, BoardEra, BoardNode, BoardSnapshot, Milestone } from "@/lib/types";
 
 type MeridianNode = CapabilityFlowNode | EraFlowNode | RuleFlowNode;
@@ -143,19 +152,23 @@ function settlePosition(
   return { x: snappedX, y: nextY };
 }
 
-export function Board() {
+export function Board({ campaignId }: { campaignId: string }) {
   return (
     <ReactFlowProvider>
-      <BoardCanvas />
+      <BoardCanvas campaignId={campaignId} />
     </ReactFlowProvider>
   );
 }
 
-function BoardCanvas() {
+function BoardCanvas({ campaignId }: { campaignId: string }) {
   const { setCenter, setViewport } = useReactFlow();
   const [caps, setCaps, onCapsChange] = useNodesState<CapabilityFlowNode>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
+  const [campaignName, setCampaignName] = useState("");
+  const [savePhase, setSavePhase] = useState<"saved" | "saving">("saved");
+  const [inviteOpen, setInviteOpen] = useState(false);
+  const [copied, setCopied] = useState(false);
   const [loadError, setLoadError] = useState("The shared board didn't answer.");
   const [syncError, setSyncError] = useState<string | null>(null);
   const [banner, setBanner] = useState<string | null>(null);
@@ -212,6 +225,10 @@ function BoardCanvas() {
         current && board.edges.some((edge) => edge.id === current) ? current : null,
       );
       setEras(board.eras ?? []);
+      if (board.campaign) {
+        setCampaignName(board.campaign.name);
+        rememberCampaign({ id: board.campaign.id, name: board.campaign.name });
+      }
     }
     if (!didFitRef.current && board.nodes.length > 0) {
       didFitRef.current = true;
@@ -242,7 +259,7 @@ function BoardCanvas() {
   const refresh = useCallback(async (initial: boolean) => {
     const generation = ++refreshGen.current;
     try {
-      const response = await fetch(`/api/board?revision=${revisionRef.current}`, {
+      const response = await fetch(`/api/board?revision=${revisionRef.current}&campaign=${encodeURIComponent(campaignId)}`, {
         cache: "no-store",
       });
       const data = (await response.json().catch(() => null)) as BoardSnapshot | { error?: string } | null;
@@ -268,7 +285,7 @@ function BoardCanvas() {
         setSyncError("Can't reach the board right now. Still retrying.");
       }
     }
-  }, [applySnapshot]);
+  }, [applySnapshot, campaignId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -285,10 +302,16 @@ function BoardCanvas() {
     };
   }, [refresh]);
 
+  function scope(url: string) {
+    const join = url.includes("?") ? "&" : "?";
+    return `${url}${join}campaign=${encodeURIComponent(campaignId)}`;
+  }
+
   async function send(url: string, method: string, body?: unknown): Promise<BoardSnapshot> {
     writesRef.current += 1;
+    setSavePhase("saving");
     try {
-      const response = await fetch(url, {
+      const response = await fetch(scope(url), {
         method,
         headers: body ? { "Content-Type": "application/json" } : undefined,
         body: body ? JSON.stringify(body) : undefined,
@@ -303,6 +326,7 @@ function BoardCanvas() {
       return data;
     } finally {
       writesRef.current -= 1;
+      if (writesRef.current === 0) setSavePhase("saved");
     }
   }
 
@@ -668,16 +692,39 @@ function BoardCanvas() {
           <div className="min-w-0">
             <div className="flex items-baseline gap-3">
               <h1 className="font-display text-2xl tracking-tight text-[#f6f0e6]">Meridian</h1>
+              <span className="font-display truncate text-lg text-[#f3e2b3]" data-testid="campaign-name">
+                {campaignName || "Opening"}
+              </span>
               <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold tracking-[0.16em] text-[#e0c088] uppercase">
                 <span className={`size-1.5 rounded-full ${syncError ? "bg-[#e07a5f]" : "bg-[#3cba9a]"}`} />
                 {syncError ? "Reconnecting" : status === "loading" ? "Opening" : "Live"}
               </span>
+              {status === "ready" && !syncError ? (
+                <span className="text-[11px] font-semibold tracking-[0.16em] text-[#b7f0df] uppercase" data-testid="saved-state">
+                  {savePhase === "saving" ? "Saving" : "Saved"}
+                </span>
+              ) : null}
             </div>
             <p className="max-w-xl text-xs leading-relaxed text-[#9aa6b2] sm:text-sm">
               Pull from the side of a bar onto the one it leads to. Open a bar for the writeup and the milestones.
             </p>
           </div>
           <div className="flex items-center gap-2">
+            <Button variant="outline" size="sm" className="border-[#e0c088]/30 bg-[#0c1a2c]" asChild>
+              <Link href="/">Campaigns</Link>
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="border-[#e0c088]/30 bg-[#0c1a2c]"
+              data-testid="invite-campaign"
+              onClick={() => {
+                setCopied(false);
+                setInviteOpen(true);
+              }}
+            >
+              Invite
+            </Button>
             <Button
               variant="outline"
               size="sm"
@@ -698,7 +745,7 @@ function BoardCanvas() {
           </div>
         </div>
         <div className="campaign" data-testid="campaign-bar">
-          <span className="campaign-kicker">Campaign</span>
+          <span className="campaign-kicker">Progress</span>
           <span className="campaign-track" aria-hidden="true">
             <span
               style={{
@@ -801,7 +848,7 @@ function BoardCanvas() {
         ) : null}
 
         {status === "loading" ? (
-          <Overlay testId="loading-state" title="Opening the shared board" body="Meridian keeps one tree for the whole team. Fetching it now." />
+          <Overlay testId="loading-state" title="Opening this campaign" body="Fetching the shared tree." />
         ) : null}
         {status === "error" ? (
           <Overlay
@@ -844,6 +891,31 @@ function BoardCanvas() {
         ) : null}
       </div>
 
+      <Dialog open={inviteOpen} onOpenChange={setInviteOpen}>
+        <DialogContent data-testid="invite-dialog" className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="font-display text-xl">Invite</DialogTitle>
+            <DialogDescription>
+              Anyone with this link can edit this tree.
+            </DialogDescription>
+          </DialogHeader>
+          <p className="text-sm break-all text-[#d5deea]" data-testid="invite-link">
+            {typeof window === "undefined" ? `/c/${campaignId}` : `${window.location.origin}/c/${campaignId}`}
+          </p>
+          <Button
+            type="button"
+            onClick={() => {
+              const link = `${window.location.origin}/c/${campaignId}`;
+              void navigator.clipboard.writeText(link).then(
+                () => setCopied(true),
+                () => setCopied(false),
+              );
+            }}
+          >
+            {copied ? "Copied" : "Copy link"}
+          </Button>
+        </DialogContent>
+      </Dialog>
       <NameDialog
         key={`name-${nameDialogKey}`}
         open={nameDialogOpen}

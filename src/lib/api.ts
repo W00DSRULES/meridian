@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { BoardRequestError } from "@/lib/db";
+import { BoardRequestError, requireCampaignId } from "@/lib/db";
 
 const NO_STORE = { "Cache-Control": "no-store" };
 
@@ -13,6 +13,10 @@ export function boardError(error: unknown) {
   }
   console.error(error);
   return boardJson({ error: "The board couldn't save that change." }, 500);
+}
+
+export function campaignOf(request: Request): string {
+  return requireCampaignId(new URL(request.url).searchParams.get("campaign"));
 }
 
 export async function readJson(request: Request): Promise<unknown> {

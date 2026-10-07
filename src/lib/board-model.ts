@@ -10,6 +10,7 @@ export const LIMITS = {
   author: 40,
   eraName: 24,
   eras: 8,
+  campaignName: 48,
   nodes: 300,
   edges: 600,
 } as const;
@@ -222,6 +223,13 @@ export function validateMilestoneName(name: string): string | null {
   const cleaned = normalizeText(name);
   if (cleaned.length === 0) return "Name this milestone.";
   if (cleaned.length > LIMITS.milestoneName) return "Milestone names stay under 80 characters.";
+  return null;
+}
+
+export function validateCampaignName(name: string): string | null {
+  const cleaned = normalizeText(name);
+  if (cleaned.length === 0) return "Name this campaign.";
+  if (cleaned.length > LIMITS.campaignName) return "Campaign names stay under 48 characters.";
   return null;
 }
 

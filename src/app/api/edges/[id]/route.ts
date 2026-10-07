@@ -1,12 +1,12 @@
-import { boardError, boardJson } from "@/lib/api";
+import { boardError, boardJson, campaignOf } from "@/lib/api";
 import { deleteEdge } from "@/lib/db";
 
 type IdContext = { params: Promise<{ id: string }> };
 
-export async function DELETE(_request: Request, context: IdContext) {
+export async function DELETE(request: Request, context: IdContext) {
   try {
     const { id } = await context.params;
-    return boardJson(deleteEdge(id));
+    return boardJson(await deleteEdge(campaignOf(request), id));
   } catch (error) {
     return boardError(error);
   }

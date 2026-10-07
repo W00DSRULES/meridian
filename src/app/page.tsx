@@ -1,5 +1,5 @@
-import { Board } from "@/components/board/board";
+import { CampaignHome } from "@/components/board/campaign-home";
 
 export default function Home() {
-  return <Board />;
+  return <CampaignHome />;
 }
