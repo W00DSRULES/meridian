@@ -11,6 +11,10 @@ export function boardError(error: unknown) {
   if (error instanceof BoardRequestError) {
     return boardJson({ error: error.message }, error.status);
   }
+  const digest = error && typeof error === "object" && "digest" in error ? String((error as { digest?: unknown }).digest) : "";
+  if (digest.startsWith("HANGING_PROMISE") || digest.includes("DYNAMIC_SERVER_USAGE")) {
+    throw error;
+  }
   console.error(error);
   return boardJson({ error: "The board couldn't save that change." }, 500);
 }

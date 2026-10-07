@@ -16,6 +16,7 @@ export type CapabilityData = {
   eraId: string;
   author: string;
   milestones: Milestone[];
+  updatedAt: number;
 };
 
 export type CapabilityFlowNode = Node<CapabilityData, "capability">;

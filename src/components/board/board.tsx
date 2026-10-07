@@ -69,6 +69,7 @@ import {
   subscribeDisplayName,
   useClientReady,
 } from "@/lib/display-name";
+import { SignInPanel } from "@/components/auth/sign-in-panel";
 import { rememberCampaign } from "@/lib/local-campaigns";
 import type { BoardEdge, BoardEra, BoardNode, BoardSnapshot, Milestone } from "@/lib/types";
 
@@ -108,6 +109,7 @@ function toCapabilityNode(node: BoardNode, selected: boolean): CapabilityFlowNod
       eraId: node.eraId,
       author: node.author,
       milestones: node.milestones,
+      updatedAt: node.updatedAt,
     },
     selected,
     zIndex: 3,
@@ -190,7 +192,12 @@ function BoardCanvas({ campaignId }: { campaignId: string }) {
   const [flashId, setFlashId] = useState<string | null>(null);
   const [celebration, setCelebration] = useState<{ tone: "milestone" | "researched"; text: string } | null>(null);
 
+  const [session, setSession] = useState<"loading" | "guest" | "in">("loading");
+  const [publicUrl, setPublicUrl] = useState<string | null>(null);
+  const [joined, setJoined] = useState(false);
   const revisionRef = useRef(-1);
+  const cardTimes = useRef(new Map<string, number>());
+  const editBase = useRef<{ id: string; updatedAt: number; revision: number } | null>(null);
   const writesRef = useRef(0);
   const draggingRef = useRef<string | null>(null);
   const didFitRef = useRef(false);
@@ -201,6 +208,7 @@ function BoardCanvas({ campaignId }: { campaignId: string }) {
     if (board.revision < revisionRef.current) return;
     const isNewer = board.revision > revisionRef.current;
     revisionRef.current = board.revision;
+    cardTimes.current = new Map(board.nodes.map((node) => [node.id, node.updatedAt]));
     if (isNewer) {
       const dragging = draggingRef.current;
       setCaps((current) =>
@@ -278,6 +286,11 @@ function BoardCanvas({ campaignId }: { campaignId: string }) {
         raw === "Failed to fetch" || raw === "Load failed"
           ? "The shared board didn't answer. It may be restarting — try again in a moment."
           : raw || "The shared board didn't answer.";
+      if (raw === "Sign in to see this tree.") {
+        setSession("guest");
+        setJoined(false);
+        return;
+      }
       if (initial && revisionRef.current < 0) {
         setLoadError(message);
         setStatus("error");
@@ -288,6 +301,54 @@ function BoardCanvas({ campaignId }: { campaignId: string }) {
   }, [applySnapshot, campaignId]);
 
   useEffect(() => {
+    let cancelled = false;
+    async function loadSession() {
+      try {
+        const response = await fetch("/api/auth/session", { cache: "no-store" });
+        const data = (await response.json()) as { user?: { email: string } | null; publicUrl?: string | null };
+        if (cancelled) return;
+        setPublicUrl(data.publicUrl ?? null);
+        setSession(data.user ? "in" : "guest");
+      } catch {
+        if (!cancelled) setSession("guest");
+      }
+    }
+    void loadSession();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (session !== "in") return;
+    let cancelled = false;
+    async function join() {
+      try {
+        const response = await fetch(`/api/campaigns/${campaignId}/join`, { method: "POST" });
+        const data = (await response.json()) as { error?: string };
+        if (cancelled) return;
+        if (!response.ok) {
+          setLoadError(data.error || "Could not join this campaign.");
+          setStatus("error");
+          setJoined(true);
+          return;
+        }
+        setJoined(true);
+      } catch {
+        if (cancelled) return;
+        setLoadError("Could not join this campaign.");
+        setStatus("error");
+        setJoined(true);
+      }
+    }
+    void join();
+    return () => {
+      cancelled = true;
+    };
+  }, [session, campaignId]);
+
+  useEffect(() => {
+    if (!joined) return;
     let cancelled = false;
     const kick = window.setTimeout(() => {
       if (!cancelled) void refresh(true);
@@ -300,34 +361,66 @@ function BoardCanvas({ campaignId }: { campaignId: string }) {
       window.clearTimeout(kick);
       window.clearInterval(timer);
     };
-  }, [refresh]);
+  }, [refresh, joined]);
 
   function scope(url: string) {
     const join = url.includes("?") ? "&" : "?";
     return `${url}${join}campaign=${encodeURIComponent(campaignId)}`;
   }
 
+  function cardStamp(techId: string): { revision: number; updatedAt?: number } {
+    if (editBase.current?.id === techId) {
+      return { revision: editBase.current.revision, updatedAt: editBase.current.updatedAt };
+    }
+    return { revision: revisionRef.current, updatedAt: cardTimes.current.get(techId) };
+  }
+
   async function send(url: string, method: string, body?: unknown): Promise<BoardSnapshot> {
     writesRef.current += 1;
     setSavePhase("saving");
     try {
+      const extra = body && typeof body === "object" ? (body as Record<string, unknown>) : {};
       const response = await fetch(scope(url), {
         method,
-        headers: body ? { "Content-Type": "application/json" } : undefined,
-        body: body ? JSON.stringify(body) : undefined,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ revision: revisionRef.current, ...extra }),
         cache: "no-store",
       });
       const data = (await response.json().catch(() => null)) as (BoardSnapshot & { error?: string }) | null;
+      if (response.status === 409) {
+        const error = new Error(data?.error || "Someone else changed this card. Reload it, then apply your draft again.");
+        error.name = "ConflictError";
+        throw error;
+      }
       if (!response.ok) {
         throw new Error(data?.error || "The board rejected that change.");
       }
       if (!data) throw new Error("The board sent an empty response.");
       applySnapshot(data);
+      if (editBase.current && data.nodes) {
+        const fresh = data.nodes.find((node) => node.id === editBase.current?.id);
+        if (fresh) editBase.current = { id: fresh.id, updatedAt: fresh.updatedAt, revision: data.revision };
+      }
       return data;
     } finally {
       writesRef.current -= 1;
       if (writesRef.current === 0) setSavePhase("saved");
     }
+  }
+
+  async function reloadOpenCard() {
+    setFormError(null);
+    await refresh(false);
+    if (!editingId) return;
+    const updatedAt = cardTimes.current.get(editingId);
+    if (updatedAt === undefined) return;
+    editBase.current = { id: editingId, updatedAt, revision: revisionRef.current };
+  }
+
+  async function signOut() {
+    await fetch("/api/auth/sign-out", { method: "POST" });
+    setJoined(false);
+    setSession("guest");
   }
 
   function note(message: string) {
@@ -362,6 +455,7 @@ function BoardCanvas({ campaignId }: { campaignId: string }) {
   function openEdit(node: CapabilityFlowNode) {
     setDialogMode("edit");
     setEditingId(node.id);
+    editBase.current = { id: node.id, updatedAt: node.data.updatedAt, revision: revisionRef.current };
     setSeed({
       title: node.data.title,
       description: node.data.description,
@@ -392,6 +486,7 @@ function BoardCanvas({ campaignId }: { campaignId: string }) {
           })),
         });
       } else if (editingId) {
+        const stamp = cardStamp(editingId);
         await send(`/api/nodes/${editingId}`, "PATCH", {
           title: draft.title,
           description: draft.description,
@@ -399,6 +494,7 @@ function BoardCanvas({ campaignId }: { campaignId: string }) {
           proficiency: draft.proficiency,
           commitment: draft.commitment,
           author: displayName,
+          ...stamp,
         });
       }
       setDialogOpen(false);
@@ -415,7 +511,7 @@ function BoardCanvas({ campaignId }: { campaignId: string }) {
     setPendingDelete(null);
     setDialogOpen(false);
     try {
-      await send(`/api/nodes/${target.id}`, "DELETE");
+      await send(`/api/nodes/${target.id}`, "DELETE", cardStamp(target.id));
     } catch (error) {
       note(error instanceof Error ? error.message : "Couldn't remove that capability.");
     }
@@ -452,7 +548,7 @@ function BoardCanvas({ campaignId }: { campaignId: string }) {
     if (!editingId) return;
     const author = requireName();
     if (!author) throw new Error("Add your name before changing the board.");
-    await send(`/api/nodes/${editingId}/milestones`, "POST", { name, author });
+    await send(`/api/nodes/${editingId}/milestones`, "POST", { name, author, ...cardStamp(editingId) });
   }
 
   async function toggleMilestone(milestone: Milestone) {
@@ -467,6 +563,7 @@ function BoardCanvas({ campaignId }: { campaignId: string }) {
     await send(`/api/nodes/${editingId}/milestones/${milestone.id}`, "PATCH", {
       done: !milestone.done,
       author,
+      ...cardStamp(editingId),
     });
     if (finishesCard && card) {
       celebrate("researched", `Researched. Every milestone on ${card.data.title} is done.`, card.id);
@@ -479,14 +576,14 @@ function BoardCanvas({ campaignId }: { campaignId: string }) {
     if (!editingId) return;
     const author = requireName();
     if (!author) throw new Error("Add your name before changing the board.");
-    await send(`/api/nodes/${editingId}/milestones/${milestone.id}`, "PATCH", { name, author });
+    await send(`/api/nodes/${editingId}/milestones/${milestone.id}`, "PATCH", { name, author, ...cardStamp(editingId) });
   }
 
   async function deleteMilestone(milestone: Milestone) {
     if (!editingId) return;
     const author = requireName();
     if (!author) throw new Error("Add your name before changing the board.");
-    await send(`/api/nodes/${editingId}/milestones/${milestone.id}`, "DELETE", { author });
+    await send(`/api/nodes/${editingId}/milestones/${milestone.id}`, "DELETE", { author, ...cardStamp(editingId) });
   }
 
   function failLink(error: unknown) {
@@ -540,7 +637,7 @@ function BoardCanvas({ campaignId }: { campaignId: string }) {
     if (!editingId) return;
     const author = requireName();
     if (!author) throw new Error("Add your name before changing the board.");
-    await send(`/api/nodes/${editingId}`, "PATCH", { eraId, author });
+    await send(`/api/nodes/${editingId}`, "PATCH", { eraId, author, ...cardStamp(editingId) });
   }
 
   const onNodeDragStart: OnNodeDrag<MeridianNode> = (_event, node) => {
@@ -564,10 +661,12 @@ function BoardCanvas({ campaignId }: { campaignId: string }) {
     setCaps((current) =>
       current.map((item) => (item.id === node.id ? { ...item, position: next } : item)),
     );
+    const stamp = cardStamp(node.id);
     void send(`/api/nodes/${node.id}`, "PATCH", {
       x: next.x,
       y: next.y,
       author,
+      ...stamp,
     })
       .catch((error: unknown) => {
         note(error instanceof Error ? error.message : "Couldn't save that move.");
@@ -677,7 +776,20 @@ function BoardCanvas({ campaignId }: { campaignId: string }) {
   const edgeSource = selectedEdge ? caps.find((node) => node.id === selectedEdge.source) : null;
   const edgeTarget = selectedEdge ? caps.find((node) => node.id === selectedEdge.target) : null;
   const deleteTarget = pendingDelete;
-  const nameDialogOpen = renaming || (clientReady && !displayName);
+  const nameDialogOpen = session === "in" && (renaming || (clientReady && !displayName));
+  const invitePath = `/c/${campaignId}`;
+  const inviteLink = publicUrl ? `${publicUrl}${invitePath}` : null;
+
+  if (session === "guest") {
+    return <SignInPanel onSuccess={() => setSession("in")} />;
+  }
+  if (session === "loading") {
+    return (
+      <div className="meridian-shell flex h-dvh items-center justify-center text-sm text-[#9aa6b2]">
+        Checking your sign-in…
+      </div>
+    );
+  }
 
   function askDelete(node: CapabilityFlowNode) {
     setDialogOpen(false);
@@ -712,6 +824,14 @@ function BoardCanvas({ campaignId }: { campaignId: string }) {
           <div className="flex items-center gap-2">
             <Button variant="outline" size="sm" className="border-[#e0c088]/30 bg-[#0c1a2c]" asChild>
               <Link href="/">Campaigns</Link>
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="border-[#e0c088]/30 bg-[#0c1a2c]"
+              onClick={() => void signOut()}
+            >
+              Sign out
             </Button>
             <Button
               variant="outline"
@@ -896,24 +1016,27 @@ function BoardCanvas({ campaignId }: { campaignId: string }) {
           <DialogHeader>
             <DialogTitle className="font-display text-xl">Invite</DialogTitle>
             <DialogDescription>
-              Anyone with this link can edit this tree.
+              {inviteLink
+                ? "Anyone on the team who opens this link and signs in joins this tree. Only members can edit it."
+                : "This copy is only on this machine. Host Meridian before you send a link teammates can open."}
             </DialogDescription>
           </DialogHeader>
           <p className="text-sm break-all text-[#d5deea]" data-testid="invite-link">
-            {typeof window === "undefined" ? `/c/${campaignId}` : `${window.location.origin}/c/${campaignId}`}
+            {inviteLink ?? invitePath}
           </p>
-          <Button
-            type="button"
-            onClick={() => {
-              const link = `${window.location.origin}/c/${campaignId}`;
-              void navigator.clipboard.writeText(link).then(
-                () => setCopied(true),
-                () => setCopied(false),
-              );
-            }}
-          >
-            {copied ? "Copied" : "Copy link"}
-          </Button>
+          {inviteLink ? (
+            <Button
+              type="button"
+              onClick={() => {
+                void navigator.clipboard.writeText(inviteLink).then(
+                  () => setCopied(true),
+                  () => setCopied(false),
+                );
+              }}
+            >
+              {copied ? "Copied" : "Copy link"}
+            </Button>
+          ) : null}
         </DialogContent>
       </Dialog>
       <NameDialog
@@ -937,6 +1060,7 @@ function BoardCanvas({ campaignId }: { campaignId: string }) {
         onChangeEra={changeEra}
         saving={saving}
         error={formError}
+        onReload={reloadOpenCard}
         onOpenChange={setDialogOpen}
         onSubmit={(draft) => void submitDraft(draft)}
         onAddMilestone={addMilestone}
@@ -997,7 +1121,7 @@ function boardNodeFromFlow(node: CapabilityFlowNode): BoardNode {
     x: node.position.x,
     y: node.position.y,
     createdAt: 0,
-    updatedAt: 0,
+    updatedAt: node.data.updatedAt,
   };
 }
 

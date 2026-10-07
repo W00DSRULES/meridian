@@ -122,10 +122,18 @@ function configuredClient(): SupabaseClient {
   return globalForSb.__meridianSb;
 }
 
+export const CARD_CONFLICT = "Someone else changed this card. Reload it, then apply your draft again.";
+
 function fail(error: { message?: string; code?: string }): never {
   const message = error.message ?? "";
   if (error.code === "23505") {
     throw new BoardRequestError(409, "That record is already on the campaign.");
+  }
+  if (/members/i.test(message) && /does not exist|schema cache|PGRST205|Could not find the table/i.test(message)) {
+    throw new BoardRequestError(
+      503,
+      "Membership isn't in Supabase yet. Run supabase/membership.sql in the SQL editor.",
+    );
   }
   if (/relation .* does not exist|Could not find the table|schema cache|PGRST205/i.test(message)) {
     throw new BoardRequestError(
@@ -382,6 +390,101 @@ async function listTechRows(client: SupabaseClient, campaignId: string): Promise
   return (result.data ?? []) as TechRow[];
 }
 
+function seenUpdatedAt(body: unknown): number | null {
+  if (!body || typeof body !== "object") return null;
+  const value = (body as Record<string, unknown>).updatedAt;
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+export function requireClientRevision(body: unknown): number {
+  if (!body || typeof body !== "object") throw new BoardRequestError(400, "That request was empty.");
+  const value = (body as Record<string, unknown>).revision;
+  if (typeof value !== "number" || !Number.isInteger(value)) {
+    throw new BoardRequestError(400, "Send the campaign revision with this save.");
+  }
+  return value;
+}
+
+export async function assertCardFresh(campaignId: string, techId: string, body: unknown): Promise<void> {
+  const revision = requireClientRevision(body);
+  const client = configuredClient();
+  const campaign = await campaignRow(client, campaignId);
+  if (revision === num(campaign.revision)) return;
+  const tech = await techInCampaign(client, campaign.id, requireId(techId));
+  const seen = seenUpdatedAt(body);
+  if (seen !== null && seen === num(tech.updated_at)) return;
+  throw new BoardRequestError(409, CARD_CONFLICT);
+}
+
+async function claimTech(
+  client: SupabaseClient,
+  techId: string,
+  author: string,
+  seen: number | null,
+): Promise<void> {
+  let query = client.from("techs").update({ author, updated_at: Date.now() }).eq("id", techId);
+  if (seen !== null) query = query.eq("updated_at", seen);
+  const result = await query.select("id");
+  if (result.error) fail(result.error);
+  if (!result.data || result.data.length === 0) {
+    if (seen !== null) throw new BoardRequestError(409, CARD_CONFLICT);
+    throw new BoardRequestError(404, "That capability is no longer on the board.");
+  }
+}
+
+export async function listMemberCampaigns(userId: string): Promise<CampaignSummary[]> {
+  const client = configuredClient();
+  const members = await client
+    .from("members")
+    .select("campaign_id, created_at")
+    .eq("user_id", userId)
+    .order("created_at", { ascending: true });
+  if (members.error) fail(members.error);
+  const ids = ((members.data ?? []) as { campaign_id: string }[]).map((row) => row.campaign_id);
+  if (ids.length === 0) return [];
+  const result = await client.from("campaigns").select("*").in("id", ids);
+  if (result.error) fail(result.error);
+  const byId = new Map(((result.data ?? []) as CampaignRow[]).map((row) => [row.id, mapCampaign(row)]));
+  return ids.flatMap((id) => {
+    const campaign = byId.get(id);
+    return campaign ? [campaign] : [];
+  });
+}
+
+export async function assertMember(userId: string, campaignId: string): Promise<void> {
+  const client = configuredClient();
+  const id = requireCampaignId(campaignId);
+  const result = await client.from("members").select("user_id").eq("campaign_id", id).eq("user_id", userId).maybeSingle();
+  if (result.error) fail(result.error);
+  if (!result.data) {
+    throw new BoardRequestError(403, "You are not on this campaign. Open the invite link while signed in to join it.");
+  }
+}
+
+export async function joinCampaign(userId: string, campaignId: string): Promise<{ joined: boolean; role: string }> {
+  const client = configuredClient();
+  const campaign = await campaignRow(client, campaignId);
+  const existing = await client
+    .from("members")
+    .select("role")
+    .eq("campaign_id", campaign.id)
+    .eq("user_id", userId)
+    .maybeSingle();
+  if (existing.error) fail(existing.error);
+  if (existing.data) return { joined: false, role: String((existing.data as { role: string }).role) };
+  const inserted = await client.from("members").insert({
+    campaign_id: campaign.id,
+    user_id: userId,
+    role: "member",
+    created_at: Date.now(),
+  });
+  if (inserted.error) {
+    if (inserted.error.code === "23505") return { joined: false, role: "member" };
+    fail(inserted.error);
+  }
+  return { joined: true, role: "member" };
+}
+
 export async function listCampaigns(): Promise<CampaignSummary[]> {
   const client = configuredClient();
   try {
@@ -395,7 +498,7 @@ export async function listCampaigns(): Promise<CampaignSummary[]> {
   return ((result.data ?? []) as CampaignRow[]).map(mapCampaign);
 }
 
-export async function createCampaign(body: unknown): Promise<CampaignSummary> {
+export async function createCampaign(body: unknown, ownerId?: string): Promise<CampaignSummary> {
   if (!body || typeof body !== "object") throw new BoardRequestError(400, "That request was empty.");
   const record = body as Record<string, unknown>;
   requireAuthor(record.author);
@@ -431,6 +534,18 @@ export async function createCampaign(body: unknown): Promise<CampaignSummary> {
   if (eras.error) {
     await client.from("campaigns").delete().eq("id", id);
     fail(eras.error);
+  }
+  if (ownerId) {
+    const member = await client.from("members").insert({
+      campaign_id: id,
+      user_id: ownerId,
+      role: "owner",
+      created_at: now,
+    });
+    if (member.error) {
+      await client.from("campaigns").delete().eq("id", id);
+      fail(member.error);
+    }
   }
   return mapCampaign(created.data as CampaignRow);
 }
@@ -630,7 +745,8 @@ export async function updateNode(campaignId: string, id: string, body: unknown):
       y = Math.max(FIRST_NODE_Y, Math.round(y));
     }
   }
-  const updated = await client
+  const seen = seenUpdatedAt(body);
+  let query = client
     .from("techs")
     .update({
       title: input.title ?? existing.title,
@@ -647,7 +763,13 @@ export async function updateNode(campaignId: string, id: string, body: unknown):
     })
     .eq("id", techId)
     .eq("campaign_id", campaign.id);
+  if (seen !== null) query = query.eq("updated_at", seen);
+  const updated = await query.select("id");
   if (updated.error) fail(updated.error);
+  if (!updated.data || updated.data.length === 0) {
+    if (seen !== null) throw new BoardRequestError(409, CARD_CONFLICT);
+    throw new BoardRequestError(404, "That capability is no longer on the board.");
+  }
   await bump(client, campaign.id);
   return readBoard(campaign.id);
 }
@@ -810,6 +932,7 @@ export async function createMilestone(campaignId: string, nodeId: string, body: 
     throw new BoardRequestError(400, `A card can hold ${LIMITS.milestones} milestones.`);
   }
   const position = milestones.reduce((max, milestone) => Math.max(max, milestone.position), -1) + 1;
+  await claimTech(client, techId, author, seenUpdatedAt(body));
   const inserted = await client.from("milestones").insert({
     id: crypto.randomUUID(),
     tech_id: techId,
@@ -818,7 +941,6 @@ export async function createMilestone(campaignId: string, nodeId: string, body: 
     position,
   });
   if (inserted.error) fail(inserted.error);
-  await client.from("techs").update({ author, updated_at: Date.now() }).eq("id", techId);
   await bump(client, campaign.id);
   return readBoard(campaign.id);
 }
@@ -852,13 +974,13 @@ export async function updateMilestone(
   const tech = await techInCampaign(client, campaign.id, techId);
   const existing = (tech.milestones ?? []).find((milestone) => milestone.id === id);
   if (!existing) throw new BoardRequestError(404, "That milestone is no longer on the card.");
+  await claimTech(client, techId, author, seenUpdatedAt(body));
   const updated = await client
     .from("milestones")
     .update({ name: name ?? existing.name, done: hasDone ? record.done === true : existing.done })
     .eq("id", id)
     .eq("tech_id", techId);
   if (updated.error) fail(updated.error);
-  await client.from("techs").update({ author, updated_at: Date.now() }).eq("id", techId);
   await bump(client, campaign.id);
   return readBoard(campaign.id);
 }
@@ -876,12 +998,12 @@ export async function deleteMilestone(
   const client = configuredClient();
   const campaign = await campaignRow(client, campaignId);
   await techInCampaign(client, campaign.id, techId);
+  await claimTech(client, techId, author, seenUpdatedAt(body));
   const removed = await client.from("milestones").delete().eq("id", id).eq("tech_id", techId).select("id");
   if (removed.error) fail(removed.error);
   if (!removed.data || removed.data.length === 0) {
     throw new BoardRequestError(404, "That milestone is no longer on the card.");
   }
-  await client.from("techs").update({ author, updated_at: Date.now() }).eq("id", techId);
   await bump(client, campaign.id);
   return readBoard(campaign.id);
 }

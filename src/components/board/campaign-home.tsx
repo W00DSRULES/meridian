@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { SignInPanel } from "@/components/auth/sign-in-panel";
 import { NameDialog } from "@/components/board/dialogs";
 import { LIMITS, normalizeText, validateCampaignName } from "@/lib/board-model";
 import {
@@ -14,20 +15,14 @@ import {
   subscribeDisplayName,
   useClientReady,
 } from "@/lib/display-name";
-import {
-  getLocalCampaigns,
-  getServerLocalCampaigns,
-  rememberCampaign,
-  subscribeLocalCampaigns,
-  type LocalCampaign,
-} from "@/lib/local-campaigns";
+import { rememberCampaign, type LocalCampaign } from "@/lib/local-campaigns";
 import type { CampaignSummary } from "@/lib/types";
 
 export function CampaignHome() {
   const router = useRouter();
   const clientReady = useClientReady();
   const displayName = useSyncExternalStore(subscribeDisplayName, getDisplayName, getServerDisplayName);
-  const local = useSyncExternalStore(subscribeLocalCampaigns, getLocalCampaigns, getServerLocalCampaigns);
+  const [session, setSession] = useState<"loading" | "guest" | "in">("loading");
   const [campaigns, setCampaigns] = useState<LocalCampaign[]>([]);
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
   const [notice, setNotice] = useState<string | null>(null);
@@ -38,6 +33,25 @@ export function CampaignHome() {
 
   useEffect(() => {
     let cancelled = false;
+    async function loadSession() {
+      try {
+        const response = await fetch("/api/auth/session", { cache: "no-store" });
+        const data = (await response.json()) as { user?: { email: string } | null };
+        if (cancelled) return;
+        setSession(data.user ? "in" : "guest");
+      } catch {
+        if (!cancelled) setSession("guest");
+      }
+    }
+    void loadSession();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (session !== "in") return;
+    let cancelled = false;
     async function load() {
       try {
         const response = await fetch("/api/campaigns", { cache: "no-store" });
@@ -45,32 +59,18 @@ export function CampaignHome() {
         if (!response.ok) {
           if (cancelled) return;
           setNotice(data.error || "The campaign list did not answer.");
-          setCampaigns(getLocalCampaigns());
+          setCampaigns([]);
           setStatus("error");
           return;
         }
         if (cancelled) return;
         setNotice(null);
-        const remote = data.campaigns ?? [];
-        let known = getLocalCampaigns();
-        if (known.length === 0 && remote[0]) {
-          rememberCampaign({ id: remote[0].id, name: remote[0].name });
-          known = getLocalCampaigns();
-        }
-        const byId = new Map(remote.map((item) => [item.id, item]));
-        const rows = known.map((item) => {
-          const fresh = byId.get(item.id);
-          return fresh ? { id: fresh.id, name: fresh.name } : item;
-        });
-        for (const row of rows) {
-          if (row.name !== known.find((item) => item.id === row.id)?.name) rememberCampaign(row);
-        }
-        setCampaigns(rows);
+        setCampaigns((data.campaigns ?? []).map((item) => ({ id: item.id, name: item.name })));
         setStatus("ready");
       } catch {
         if (cancelled) return;
         setNotice("The campaign list did not answer.");
-        setCampaigns(getLocalCampaigns());
+        setCampaigns([]);
         setStatus("error");
       }
     }
@@ -78,7 +78,24 @@ export function CampaignHome() {
     return () => {
       cancelled = true;
     };
-  }, [local]);
+  }, [session]);
+
+  async function signOut() {
+    await fetch("/api/auth/sign-out", { method: "POST" });
+    setCampaigns([]);
+    setSession("guest");
+  }
+
+  if (session === "guest") {
+    return <SignInPanel onSuccess={() => setSession("in")} />;
+  }
+  if (session === "loading") {
+    return (
+      <div className="meridian-shell flex min-h-dvh items-center justify-center text-sm text-[#9aa6b2]">
+        Checking your sign-in…
+      </div>
+    );
+  }
 
   async function create() {
     const message = validateCampaignName(name);
@@ -113,9 +130,14 @@ export function CampaignHome() {
       <main className="mx-auto flex w-full max-w-xl flex-col gap-8 px-4 py-10 sm:px-6">
         <header>
           <h1 className="font-display text-4xl tracking-tight text-[#f6f0e6]">Meridian</h1>
-          <p className="mt-2 text-sm leading-relaxed text-[#9aa6b2]">
-            Each campaign is one tech tree. People with the invite link edit it together.
-          </p>
+          <div className="mt-2 flex items-start justify-between gap-3">
+            <p className="text-sm leading-relaxed text-[#9aa6b2]">
+              Each campaign is one tech tree. Sign in, then open an invite link to join it. Only members can edit.
+            </p>
+            <Button variant="outline" size="sm" className="border-[#e0c088]/30 bg-[#0c1a2c]" onClick={() => void signOut()}>
+              Sign out
+            </Button>
+          </div>
         </header>
 
         <section className="grid gap-3" aria-label="Campaigns" data-testid="campaign-list">
@@ -127,7 +149,7 @@ export function CampaignHome() {
             </p>
           ) : null}
           {status !== "loading" && campaigns.length === 0 && !notice ? (
-            <p className="text-sm text-[#9aa6b2]">No campaigns in this browser yet. Name one below.</p>
+            <p className="text-sm text-[#9aa6b2]">No campaigns for this account yet. Create one, or open an invite link.</p>
           ) : null}
           <ul className="grid gap-2">
             {campaigns.map((campaign) => (

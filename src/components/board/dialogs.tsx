@@ -154,6 +154,7 @@ export function CapabilityDialog({
   onChangeEra,
   saving,
   error,
+  onReload,
   onOpenChange,
   onSubmit,
   onDelete,
@@ -178,6 +179,7 @@ export function CapabilityDialog({
   onChangeEra?: (eraId: string) => Promise<void>;
   saving: boolean;
   error: string | null;
+  onReload?: () => Promise<void>;
   onOpenChange: (open: boolean) => void;
   onSubmit: (draft: CapabilityDraft) => void;
   onDelete?: () => void;
@@ -702,7 +704,26 @@ export function CapabilityDialog({
           </div>
           </div>
 
-          {shownError ? <p className="text-sm text-[#f0b2a4]">{shownError}</p> : null}
+          {shownError ? (
+            <div className="grid gap-2">
+              <p className="text-sm text-[#f0b2a4]" data-testid="card-error">
+                {shownError}
+              </p>
+              {onReload && /someone else changed this card/i.test(shownError) ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  data-testid="reload-card"
+                  onClick={() => {
+                    setLocalError(null);
+                    void onReload();
+                  }}
+                >
+                  Reload this card
+                </Button>
+              ) : null}
+            </div>
+          ) : null}
           <p className="text-xs text-[#8ea0b5]">Stamped as {author || "you"} when you save.</p>
           <DialogFooter className="sm:justify-between">
             {mode === "edit" && onDelete ? (
