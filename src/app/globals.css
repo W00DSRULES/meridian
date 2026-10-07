@@ -198,25 +198,20 @@
 }
 
 .meridian-flow .react-flow__handle.meridian-handle {
-  display: flex;
-  width: 58px;
-  height: 28px;
-  align-items: center;
-  justify-content: center;
-  border: 1px solid #f6e7bf;
+  width: 14px;
+  height: 14px;
+  border: 2px solid #e7f2ff;
   border-radius: 999px;
-  background: linear-gradient(180deg, #f3e2b3, #c6a15a);
-  color: #1a1408;
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  box-shadow: 0 0 0 3px #04101c, 0 0 12px rgba(231, 201, 138, 0.45);
+  background: #9ec4e4;
+  box-shadow: 0 0 0 3px #04101c;
 }
 
-.meridian-flow .react-flow__handle.meridian-handle span {
-  pointer-events: none;
-  line-height: 1;
+.meridian-flow .react-flow__handle.meridian-handle:hover,
+.meridian-flow .react-flow__handle.meridian-handle.connectingfrom,
+.meridian-flow .react-flow__handle.meridian-handle.connectingto,
+.meridian-flow .react-flow__handle.meridian-handle.valid {
+  background: #f4fbff;
+  box-shadow: 0 0 0 3px #04101c, 0 0 14px rgba(186, 224, 255, 0.95);
 }
 
 .meridian-flow .react-flow__node-era {
@@ -249,6 +244,10 @@
 }
 
 .tech-card {
+  --frame: #2a2e36;
+  --wash: #0c0e12;
+  --glow: transparent;
+  --ink: #a8b0bc;
   width: 100%;
   color: #f4efe6;
 }
@@ -256,16 +255,16 @@
 .tech-card-frame {
   position: relative;
   display: flex;
-  min-height: 188px;
+  min-height: 168px;
   flex-direction: column;
-  border: 2px solid var(--frame, #8ea0b8);
+  border: 2px solid var(--frame);
   border-radius: 8px;
   background:
-    linear-gradient(180deg, rgba(16, 36, 58, 0.98), rgba(6, 16, 30, 0.98));
+    radial-gradient(120% 90% at 50% 0%, color-mix(in srgb, var(--wash) 92%, transparent), transparent 64%),
+    linear-gradient(180deg, #12161c, #07090d);
   box-shadow:
-    inset 0 0 0 4px #04101c,
-    inset 0 0 0 6px color-mix(in srgb, var(--frame) 78%, #e7c98a),
-    inset 0 0 0 7px rgba(231, 201, 138, 0.35);
+    inset 0 0 28px color-mix(in srgb, var(--wash) 70%, transparent),
+    0 0 22px var(--glow);
   padding: 12px 12px 10px;
 }
 
@@ -276,7 +275,7 @@
   width: 14px;
   height: 14px;
   pointer-events: none;
-  border-color: #f3e2b3;
+  border-color: var(--frame);
   border-style: solid;
 }
 
@@ -292,65 +291,16 @@
   border-width: 0 1px 1px 0;
 }
 
-.tech-card[data-proficiency="good"] {
-  --frame: #3cba9a;
-}
-
-.tech-card[data-proficiency="bad"] {
-  --frame: #e07a5f;
-}
-
-.tech-card[data-proficiency="neutral"] {
-  --frame: #93a4bb;
-}
-
 .tech-card[data-selected="true"] .tech-card-frame,
 .tech-card[data-flash="true"] .tech-card-frame {
   box-shadow:
-    0 0 0 1px #f6e7bf,
-    0 0 26px rgba(243, 226, 179, 0.72),
-    inset 0 0 0 4px #04101c,
-    inset 0 0 0 6px #f3e2b3;
-}
-
-.tech-card[data-research="waiting"] .tech-card-frame {
-  filter: saturate(0.72);
-}
-
-.tech-card[data-research="progress"] .tech-card-frame {
-  box-shadow:
-    inset 0 0 0 4px #04101c,
-    inset 0 0 0 6px color-mix(in srgb, var(--frame) 78%, #e7c98a),
-    0 0 16px rgba(231, 201, 138, 0.18);
-}
-
-.tech-card[data-research="researched"] .tech-card-frame {
-  border-color: #f3e2b3;
-  box-shadow:
-    0 0 0 1px rgba(243, 226, 179, 0.85),
-    0 0 22px rgba(231, 201, 138, 0.48),
-    inset 0 0 0 4px #04101c,
-    inset 0 0 0 6px #e7c98a;
+    0 0 0 1px color-mix(in srgb, var(--ink) 70%, white),
+    inset 0 0 28px color-mix(in srgb, var(--wash) 80%, transparent),
+    0 0 26px var(--glow);
 }
 
 .tech-card[data-awaiting="true"] {
-  opacity: 0.78;
-}
-
-.tech-card[data-linking="source"] .tech-card-frame {
-  box-shadow:
-    0 0 0 2px #f6e7bf,
-    0 0 24px rgba(243, 226, 179, 0.7),
-    inset 0 0 0 4px #04101c,
-    inset 0 0 0 6px #f3e2b3;
-}
-
-.tech-card[data-linking="target"] .tech-card-frame {
-  cursor: pointer;
-  box-shadow:
-    0 0 0 1px rgba(243, 226, 179, 0.7),
-    inset 0 0 0 4px #04101c,
-    inset 0 0 0 6px rgba(243, 226, 179, 0.55);
+  opacity: 0.72;
 }
 
 .tech-medallion {
@@ -359,11 +309,11 @@
   height: 36px;
   place-items: center;
   margin-bottom: 6px;
-  border: 1px solid rgba(231, 201, 138, 0.85);
+  border: 1px solid var(--frame);
   border-radius: 999px;
-  background: radial-gradient(circle at 40% 35%, #1d3554, #0b1626 70%);
-  color: #f3e2b3;
-  box-shadow: inset 0 0 0 3px #071422, 0 0 0 1px rgba(231, 201, 138, 0.35);
+  background: radial-gradient(circle at 40% 35%, #1a222c, #0b0e12 70%);
+  color: var(--ink);
+  box-shadow: inset 0 0 0 3px #07090d;
 }
 
 .tech-medallion svg {
@@ -381,12 +331,11 @@
 }
 
 .tech-mark-doing {
-  background: #e7c98a;
-  box-shadow: 0 0 8px rgba(231, 201, 138, 0.85);
+  background: var(--ink);
 }
 
 .tech-mark-next {
-  border: 1.5px solid #e7c98a;
+  border: 1.5px solid var(--ink);
   background: transparent;
 }
 
@@ -425,7 +374,7 @@
   font-size: 12px;
   font-weight: 650;
   letter-spacing: 0.04em;
-  color: #f3e2b3;
+  color: var(--ink);
 }
 
 .tech-bar {
@@ -434,14 +383,14 @@
   flex: 1;
   overflow: hidden;
   border-radius: 999px;
-  background: rgba(231, 201, 138, 0.16);
-  box-shadow: inset 0 0 0 1px rgba(231, 201, 138, 0.25);
+  background: rgba(255, 255, 255, 0.08);
 }
 
 .tech-bar > span {
   display: block;
   height: 100%;
-  background: linear-gradient(90deg, #c6a15a, #f3e2b3);
+  background: var(--frame);
+  box-shadow: 0 0 8px var(--glow);
 }
 
 .tech-pips {
@@ -457,15 +406,15 @@
 .tech-pips li {
   width: 8px;
   height: 8px;
-  border: 1px solid rgba(231, 201, 138, 0.7);
+  border: 1px solid rgba(255, 255, 255, 0.22);
   border-radius: 999px;
   background: transparent;
 }
 
 .tech-pips li[data-done="true"] {
-  border-color: #f3e2b3;
-  background: #e7c98a;
-  box-shadow: 0 0 6px rgba(231, 201, 138, 0.75);
+  border-color: var(--frame);
+  background: var(--frame);
+  box-shadow: 0 0 6px var(--glow);
 }
 
 .era-plaque {
@@ -653,8 +602,8 @@
 
 @media (pointer: coarse) {
   .meridian-flow .react-flow__handle.meridian-handle {
-    width: 68px;
-    height: 34px;
+    width: 18px;
+    height: 18px;
   }
 
   .tech-check {
@@ -782,8 +731,8 @@
 .campaign-track > span {
   display: block;
   height: 100%;
-  background: linear-gradient(90deg, #8d6a32, #f3e2b3);
-  box-shadow: 0 0 10px rgba(243, 226, 179, 0.45);
+  background: #7eb6e0;
+  box-shadow: 0 0 10px rgba(126, 182, 224, 0.4);
 }
 
 .campaign-count {
@@ -792,39 +741,6 @@
   font-size: 12px;
   font-variant-numeric: tabular-nums;
   font-weight: 650;
-}
-
-.link-hint {
-  position: absolute;
-  top: 12px;
-  left: 50%;
-  z-index: 30;
-  display: flex;
-  width: min(100% - 1.5rem, 34rem);
-  translate: -50% 0;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  border: 1px solid #f3e2b3;
-  border-radius: 999px;
-  background: rgba(12, 24, 40, 0.94);
-  box-shadow: 0 0 24px rgba(231, 201, 138, 0.35);
-  padding: 8px 10px 8px 16px;
-  color: #f6f0e6;
-  font-size: 14px;
-}
-
-.link-hint button {
-  flex: none;
-  border: 1px solid rgba(243, 226, 179, 0.5);
-  border-radius: 999px;
-  background: transparent;
-  color: #f3e2b3;
-  padding: 6px 12px;
-  font-size: 12px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
 }
 
 .celebrate {
@@ -846,10 +762,10 @@
 }
 
 .celebrate-researched {
-  border: 1px solid #f6e7bf;
-  background: radial-gradient(circle at 30% 30%, #f3e2b3, #b8893d 70%);
-  color: #2a2112;
-  box-shadow: 0 0 28px rgba(243, 226, 179, 0.7);
+  border: 1px solid #b6f5cf;
+  background: radial-gradient(circle at 30% 30%, #d9ffe8, #2ea866 72%);
+  color: #06210f;
+  box-shadow: 0 0 28px rgba(72, 210, 130, 0.55);
 }
 
 .tech-popup-grid {

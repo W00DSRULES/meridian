@@ -118,13 +118,67 @@ export function milestoneCounts(milestones: { done: boolean }[]): { done: number
   return { done, total };
 }
 
-export type ResearchState = "waiting" | "progress" | "researched";
+type Rgb = [number, number, number];
 
-export function researchState(milestones: { done: boolean }[]): ResearchState {
-  const { done, total } = milestoneCounts(milestones);
-  if (total > 0 && done === total) return "researched";
-  if (done > 0) return "progress";
-  return "waiting";
+const PAINT_STOPS: { t: number; frame: Rgb; wash: Rgb }[] = [
+  { t: 0, frame: [42, 46, 54], wash: [12, 14, 18] },
+  { t: 0.2, frame: [64, 104, 148], wash: [28, 52, 82] },
+  { t: 0.5, frame: [142, 198, 236], wash: [48, 96, 140] },
+  { t: 0.82, frame: [86, 196, 164], wash: [28, 92, 74] },
+  { t: 1, frame: [54, 196, 108], wash: [24, 110, 62] },
+];
+
+function lerpChannel(start: number, end: number, amount: number) {
+  return start + (end - start) * amount;
+}
+
+function lerpRgb(start: Rgb, end: Rgb, amount: number): Rgb {
+  return [
+    lerpChannel(start[0], end[0], amount),
+    lerpChannel(start[1], end[1], amount),
+    lerpChannel(start[2], end[2], amount),
+  ];
+}
+
+function rgb([red, green, blue]: Rgb, alpha?: number) {
+  const channels = `${Math.round(red)} ${Math.round(green)} ${Math.round(blue)}`;
+  if (alpha === undefined) return `rgb(${channels})`;
+  return `rgb(${channels} / ${alpha})`;
+}
+
+export type ProgressPaint = {
+  frame: string;
+  wash: string;
+  glow: string;
+  ink: string;
+  fraction: number;
+};
+
+export function progressPaint(done: number, total: number): ProgressPaint {
+  const fraction = total <= 0 || done <= 0 ? 0 : Math.min(1, done / total);
+  let start = PAINT_STOPS[0];
+  let end = PAINT_STOPS[PAINT_STOPS.length - 1];
+  for (let index = 0; index < PAINT_STOPS.length - 1; index += 1) {
+    const left = PAINT_STOPS[index];
+    const right = PAINT_STOPS[index + 1];
+    if (fraction >= left.t && fraction <= right.t) {
+      start = left;
+      end = right;
+      break;
+    }
+  }
+  const span = end.t - start.t || 1;
+  const local = (fraction - start.t) / span;
+  const frame = lerpRgb(start.frame, end.frame, local);
+  const wash = lerpRgb(start.wash, end.wash, local);
+  const ink = fraction === 0 ? ([168, 176, 188] as Rgb) : lerpRgb(frame, [244, 250, 255], 0.42);
+  return {
+    frame: rgb(frame),
+    wash: rgb(wash),
+    glow: fraction === 0 ? "transparent" : rgb(frame, 0.2 + fraction * 0.5),
+    ink: rgb(ink),
+    fraction,
+  };
 }
 
 export function validateIdentity(author: string): string | null {
