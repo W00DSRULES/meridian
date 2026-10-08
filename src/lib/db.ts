@@ -559,6 +559,7 @@ export async function readBoard(campaignId: string): Promise<BoardSnapshot> {
     throw new BoardRequestError(502, "Supabase didn't answer. Check SUPABASE_URL and that this machine can reach it.");
   }
   const campaign = await campaignRow(client, campaignId);
+  await ensureFourEras(client, campaign.id);
   const [eras, techs, linksResult] = await Promise.all([
     listEraRows(client, campaign.id),
     listTechRows(client, campaign.id),
@@ -674,6 +675,7 @@ export async function createNode(campaignId: string, body: unknown): Promise<Boa
   }
   const client = configuredClient();
   const campaign = await campaignRow(client, campaignId);
+  await ensureFourEras(client, campaign.id);
   const eras = await listEraRows(client, campaign.id);
   const techs = await listTechRows(client, campaign.id);
   if (techs.length >= LIMITS.nodes) {
@@ -723,6 +725,7 @@ export async function updateNode(campaignId: string, id: string, body: unknown):
   const input = parseNodeWrite(body, true);
   const client = configuredClient();
   const campaign = await campaignRow(client, campaignId);
+  await ensureFourEras(client, campaign.id);
   const existing = await techInCampaign(client, campaign.id, techId);
   const eras = await listEraRows(client, campaign.id);
   let eraId = input.eraId ?? existing.era_id ?? eras[0]?.id;
@@ -836,52 +839,82 @@ export async function deleteEdge(campaignId: string, id: string): Promise<BoardS
   return readBoard(campaign.id);
 }
 
-async function placeByEra(client: SupabaseClient, campaignId: string): Promise<void> {
+const ERA_COUNT = DEFAULT_ERAS.length;
+
+async function ensureFourEras(client: SupabaseClient, campaignId: string): Promise<void> {
   const eras = await listEraRows(client, campaignId);
-  const techs = await listTechRows(client, campaignId);
-  for (const [column, era] of eras.entries()) {
-    const members = techs
-      .filter((tech) => tech.era_id === era.id)
+  if (eras.length === ERA_COUNT) return;
+
+  if (eras.length > ERA_COUNT) {
+    const keep = eras.slice(0, ERA_COUNT);
+    const drop = eras.slice(ERA_COUNT);
+    const fourth = keep[ERA_COUNT - 1];
+    const dropIds = new Set(drop.map((era) => era.id));
+    const techs = await listTechRows(client, campaignId);
+    const staying = techs
+      .filter((tech) => tech.era_id === fourth.id)
       .sort((a, b) => a.y - b.y || a.id.localeCompare(b.id));
-    for (const [index, tech] of members.entries()) {
+    const moving = techs
+      .filter((tech) => tech.era_id !== null && dropIds.has(tech.era_id))
+      .sort((a, b) => a.y - b.y || a.id.localeCompare(b.id));
+    let slot = staying.length;
+    for (const tech of moving) {
       const updated = await client
         .from("techs")
-        .update({ era_id: era.id, x: columnX(column), y: FIRST_NODE_Y + index * NODE_STEP_Y })
+        .update({
+          era_id: fourth.id,
+          x: columnX(ERA_COUNT - 1),
+          y: FIRST_NODE_Y + slot * NODE_STEP_Y,
+        })
         .eq("id", tech.id);
       if (updated.error) fail(updated.error);
+      slot += 1;
     }
+    for (const [index, era] of keep.entries()) {
+      if (num(era.position) === index) continue;
+      const positioned = await client.from("eras").update({ position: index }).eq("id", era.id);
+      if (positioned.error) fail(positioned.error);
+    }
+    const removed = await client.from("eras").delete().in("id", drop.map((era) => era.id)).eq("campaign_id", campaignId);
+    if (removed.error) fail(removed.error);
+    await bump(client, campaignId);
+    return;
   }
+
+  const taken = new Set(eras.map((era) => era.name.toLowerCase()));
+  const inserts: { id: string; campaign_id: string; name: string; position: number }[] = [];
+  let position = eras.length;
+  for (const era of DEFAULT_ERAS) {
+    if (position >= ERA_COUNT) break;
+    if (taken.has(era.name.toLowerCase())) continue;
+    inserts.push({
+      id: crypto.randomUUID(),
+      campaign_id: campaignId,
+      name: era.name,
+      position,
+    });
+    taken.add(era.name.toLowerCase());
+    position += 1;
+  }
+  while (position < ERA_COUNT) {
+    const name = `Era ${position + 1}`;
+    inserts.push({
+      id: crypto.randomUUID(),
+      campaign_id: campaignId,
+      name,
+      position,
+    });
+    position += 1;
+  }
+  const inserted = await client.from("eras").insert(inserts);
+  if (inserted.error) fail(inserted.error);
+  await bump(client, campaignId);
 }
 
-export async function createEra(campaignId: string, body: unknown): Promise<BoardSnapshot> {
-  if (!body || typeof body !== "object") throw new BoardRequestError(400, "That request was empty.");
-  const record = body as Record<string, unknown>;
-  requireAuthor(record.author);
-  const client = configuredClient();
-  const campaign = await campaignRow(client, campaignId);
-  const eras = await listEraRows(client, campaign.id);
-  if (eras.length >= LIMITS.eras) {
-    throw new BoardRequestError(400, "The board already has as many eras as it can hold.");
-  }
-  const requested = typeof record.name === "string" ? record.name : "New era";
-  let name = normalizeText(requested) || "New era";
-  const message = validateEraName(name);
-  if (message) throw new BoardRequestError(400, message);
-  const taken = new Set(eras.map((era) => era.name.toLowerCase()));
-  if (taken.has(name.toLowerCase())) {
-    let suffix = 2;
-    while (taken.has(`${name} ${suffix}`.toLowerCase()) && suffix < 20) suffix += 1;
-    name = `${name} ${suffix}`;
-  }
-  const inserted = await client.from("eras").insert({
-    id: crypto.randomUUID(),
-    campaign_id: campaign.id,
-    name,
-    position: eras.length,
-  });
-  if (inserted.error) fail(inserted.error);
-  await bump(client, campaign.id);
-  return readBoard(campaign.id);
+export async function createEra(_campaignId: string, _body: unknown): Promise<BoardSnapshot> {
+  void _campaignId;
+  void _body;
+  throw new BoardRequestError(400, "A tree has four eras. Rename a plaque instead.");
 }
 
 export async function updateEra(campaignId: string, id: string, body: unknown): Promise<BoardSnapshot> {
@@ -894,23 +927,14 @@ export async function updateEra(campaignId: string, id: string, body: unknown): 
   const eras = await listEraRows(client, campaign.id);
   const index = eras.findIndex((era) => era.id === eraId);
   if (index < 0) throw new BoardRequestError(404, "That era is no longer on the board.");
+  if (record.direction !== undefined) {
+    throw new BoardRequestError(400, "Eras stay in this order. Rename a plaque instead.");
+  }
   if (typeof record.name === "string") {
     const message = validateEraName(record.name);
     if (message) throw new BoardRequestError(400, message);
     const renamed = await client.from("eras").update({ name: normalizeText(record.name) }).eq("id", eraId);
     if (renamed.error) fail(renamed.error);
-  }
-  if (record.direction === -1 || record.direction === 1) {
-    const next = index + record.direction;
-    if (next >= 0 && next < eras.length) {
-      const current = eras[index];
-      const other = eras[next];
-      const swapCurrent = await client.from("eras").update({ position: other.position }).eq("id", current.id);
-      if (swapCurrent.error) fail(swapCurrent.error);
-      const swapOther = await client.from("eras").update({ position: current.position }).eq("id", other.id);
-      if (swapOther.error) fail(swapOther.error);
-      await placeByEra(client, campaign.id);
-    }
   }
   await bump(client, campaign.id);
   return readBoard(campaign.id);

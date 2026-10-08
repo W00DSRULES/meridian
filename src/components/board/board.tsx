@@ -47,7 +47,7 @@ import {
   NameDialog,
   type CapabilityDraft,
 } from "@/components/board/dialogs";
-import { ColumnRule, EraBand, type EraFlowNode, type RuleFlowNode } from "@/components/board/era-band";
+import { AddTechNode, ColumnRule, EraBand, type AddTechFlowNode, type EraFlowNode, type RuleFlowNode } from "@/components/board/era-band";
 import {
   BAND_OFFSET_X,
   FIRST_NODE_Y,
@@ -73,12 +73,13 @@ import { SignInPanel } from "@/components/auth/sign-in-panel";
 import { rememberCampaign } from "@/lib/local-campaigns";
 import type { BoardEdge, BoardEra, BoardNode, BoardSnapshot, Milestone } from "@/lib/types";
 
-type MeridianNode = CapabilityFlowNode | EraFlowNode | RuleFlowNode;
+type MeridianNode = CapabilityFlowNode | EraFlowNode | RuleFlowNode | AddTechFlowNode;
 
 const nodeTypes: NodeTypes = {
   capability: CapabilityNode,
   era: EraBand,
   rule: ColumnRule,
+  add: AddTechNode,
 };
 
 const edgeDefaults = {
@@ -170,6 +171,7 @@ function BoardCanvas({ campaignId }: { campaignId: string }) {
   const [campaignName, setCampaignName] = useState("");
   const [savePhase, setSavePhase] = useState<"saved" | "saving">("saved");
   const [inviteOpen, setInviteOpen] = useState(false);
+  const [eraPromptOpen, setEraPromptOpen] = useState(false);
   const [copied, setCopied] = useState(false);
   const [loadError, setLoadError] = useState("The shared board didn't answer.");
   const [syncError, setSyncError] = useState<string | null>(null);
@@ -463,15 +465,26 @@ function BoardCanvas({ campaignId }: { campaignId: string }) {
     setRenaming(false);
   }
 
-  function openCreate() {
+  function askEra() {
+    if (eras.length === 0) return;
     if (!displayName) {
       setNameDialogKey((key) => key + 1);
       setRenaming(true);
       return;
     }
+    setEraPromptOpen(true);
+  }
+
+  function openCreate(eraId: string) {
+    if (!displayName) {
+      setNameDialogKey((key) => key + 1);
+      setRenaming(true);
+      return;
+    }
+    setEraPromptOpen(false);
     setDialogMode("create");
     setEditingId(null);
-    setSeed({ ...EMPTY_DRAFT, eraId: eras[0]?.id ?? "" });
+    setSeed({ ...EMPTY_DRAFT, eraId });
     setFormError(null);
     setFormKey((key) => key + 1);
     setDialogOpen(true);
@@ -622,14 +635,14 @@ function BoardCanvas({ campaignId }: { campaignId: string }) {
 
   const onConnectEnd: OnConnectEnd = (event, connectionState) => {
     const fromId = connectionState.fromNode?.id;
-    if (!fromId || fromId.startsWith("era-")) return;
+    if (!fromId || fromId.startsWith("era-") || fromId.startsWith("add-")) return;
     const point = "changedTouches" in event ? event.changedTouches[0] : event;
     const stack = document.elementsFromPoint(point.clientX, point.clientY);
     const host = stack
       .map((element) => (element instanceof Element ? element.closest(".react-flow__node") : null))
       .find((element): element is Element => element !== null);
     const targetId = host?.getAttribute("data-id") ?? "";
-    if (!targetId || targetId === fromId || targetId.startsWith("era-") || targetId.startsWith("rule-")) return;
+    if (!targetId || targetId === fromId || targetId.startsWith("era-") || targetId.startsWith("rule-") || targetId.startsWith("add-")) return;
     if (connectionState.isValid && connectionState.toNode?.id === targetId) return;
     void persistEdge(fromId, targetId).catch(failLink);
   };
@@ -642,20 +655,8 @@ function BoardCanvas({ campaignId }: { campaignId: string }) {
     });
   }
 
-  function shiftEra(id: string, direction: -1 | 1) {
-    const author = requireName();
-    if (!author) return;
-    void send(`/api/eras/${id}`, "PATCH", { direction, author }).catch((error: unknown) => {
-      note(error instanceof Error ? error.message : "Couldn't reorder that era.");
-    });
-  }
-
-  function addEra() {
-    const author = requireName();
-    if (!author) return;
-    void send("/api/eras", "POST", { name: "New era", author }).catch((error: unknown) => {
-      note(error instanceof Error ? error.message : "Couldn't add that era.");
-    });
+  function addTechnology(eraId: string) {
+    openCreate(eraId);
   }
 
   async function changeEra(eraId: string) {
@@ -707,13 +708,11 @@ function BoardCanvas({ campaignId }: { campaignId: string }) {
       id: `era-${era.id}`,
       type: "era",
       position: { x: columnX(index) + BAND_OFFSET_X, y: 8 },
-      data: {
+        data: {
         eraId: era.id,
         numeral: roman(index),
         title: era.name,
         hot: activeColumn === index,
-        first: index === 0,
-        last: index === eras.length - 1,
       },
       draggable: false,
       selectable: false,
@@ -741,7 +740,27 @@ function BoardCanvas({ campaignId }: { campaignId: string }) {
         style: { width: 1, height: 2200, pointerEvents: "none", visibility: "visible" },
       };
     });
-    return [...rules, ...eraNodes, ...caps];
+    const addNodes: AddTechFlowNode[] = eras.map((era, index) => {
+      const columnCaps = caps.filter((node) => node.data.eraId === era.id);
+      const y = columnCaps.length
+        ? Math.max(...columnCaps.map((node) => node.position.y)) + NODE_STEP_Y
+        : FIRST_NODE_Y;
+      return {
+        id: `add-${era.id}`,
+        type: "add",
+        position: { x: columnX(index), y },
+        data: { eraId: era.id, eraName: era.name },
+        draggable: false,
+        selectable: false,
+        connectable: false,
+        focusable: true,
+        deletable: false,
+        className: "nodrag nopan",
+        zIndex: 4,
+        style: { width: PLAQUE_WIDTH, height: 40, visibility: "visible" },
+      };
+    });
+    return [...rules, ...eraNodes, ...addNodes, ...caps];
   }, [activeColumn, caps, eras]);
 
   const campaign = useMemo(() => {
@@ -822,7 +841,7 @@ function BoardCanvas({ campaignId }: { campaignId: string }) {
   }
 
   return (
-    <BoardChrome.Provider value={{ flashId, awaitingIds, renameEra, shiftEra, addEra }}>
+    <BoardChrome.Provider value={{ flashId, awaitingIds, renameEra, addTechnology }}>
     <div className="meridian-shell flex h-dvh min-h-0 flex-col text-[#f4efe6]">
       <header className="z-20 border-b border-[#e0c088]/25 bg-[#071422]/90 px-3 py-3 sm:px-5">
         <div className="flex flex-wrap items-center justify-between gap-3">
@@ -891,10 +910,9 @@ function BoardCanvas({ campaignId }: { campaignId: string }) {
             >
               <span className="truncate">{displayName ?? "Your name"}</span>
             </Button>
-            <Button size="sm" data-testid="add-capability" onClick={openCreate}>
+            <Button size="sm" data-testid="add-technology-header" onClick={askEra}>
               <Plus />
-              <span className="sm:hidden">Add</span>
-              <span className="hidden sm:inline">Add capability</span>
+              Add technology
             </Button>
           </div>
         </div>
@@ -916,7 +934,8 @@ function BoardCanvas({ campaignId }: { campaignId: string }) {
 
       <div className="relative min-h-0 flex-1">
         <style>{`
-          .meridian-flow .react-flow__node-era {
+          .meridian-flow .react-flow__node-era,
+          .meridian-flow .react-flow__node-add {
             z-index: 4 !important;
             pointer-events: all !important;
             visibility: visible !important;
@@ -932,7 +951,7 @@ function BoardCanvas({ campaignId }: { campaignId: string }) {
               changes.filter(
                 (change) =>
                   !("id" in change) ||
-                  (!change.id.startsWith("era-") && !change.id.startsWith("rule-")),
+                  (!change.id.startsWith("era-") && !change.id.startsWith("rule-") && !change.id.startsWith("add-")),
               ) as NodeChange<CapabilityFlowNode>[],
             );
           }}
@@ -1016,8 +1035,7 @@ function BoardCanvas({ campaignId }: { campaignId: string }) {
           <Overlay
             testId="empty-state"
             title="The tree is still bare"
-            body="Add the first capability, then open it and write the milestones the team can check off. Drag from one card onto another to connect them."
-            action={<Button data-testid="empty-add" onClick={openCreate}>Add the first capability</Button>}
+            body="Each column has Add technology. The header button asks which era, then opens the same form."
           />
         ) : null}
 
@@ -1044,6 +1062,31 @@ function BoardCanvas({ campaignId }: { campaignId: string }) {
           </div>
         ) : null}
       </div>
+
+      <Dialog open={eraPromptOpen} onOpenChange={setEraPromptOpen}>
+        <DialogContent data-testid="era-prompt" className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="font-display text-xl">Which era?</DialogTitle>
+            <DialogDescription>
+              The new technology is added to the column you pick.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-2">
+            {eras.map((era) => (
+              <Button
+                key={era.id}
+                type="button"
+                variant="outline"
+                className="justify-start border-[#e0c088]/35 bg-[#0c1a2c]"
+                data-testid="era-prompt-choice"
+                onClick={() => openCreate(era.id)}
+              >
+                {era.name}
+              </Button>
+            ))}
+          </div>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={inviteOpen} onOpenChange={setInviteOpen}>
         <DialogContent data-testid="invite-dialog" className="sm:max-w-lg">

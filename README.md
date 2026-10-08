@@ -2,7 +2,7 @@
 
 Meridian is a shared capability tree. A campaign is one saved tech tree that several people edit together. Sales, dev, and engineering use it to see what is connected, how far the milestones have come, and what the team is ready to do next.
 
-The board is drawn like a strategy-game tech tree: era columns left to right, starting with MVP, Traction, Scale, and Horizon. Each column has a plaque you can rename, and you can add an era or move one earlier or later. A bar's color follows its milestones, from near black when nothing is done, through blue while work is underway, to green when every milestone is done. A mark beside the title — fire, a melting face, or a shrug — shows how the team reads that capability. Open a bar to write the subtitle and the longer description, pick its era, and add, edit, check off, or delete milestones. Sign in with email and password. An invite link joins that campaign after sign-in, and only members can open or edit it.
+The board is drawn like a strategy-game tech tree: era columns left to right. Every tree has exactly four eras, named MVP, Traction, Scale, and Horizon until someone renames a plaque. Eras cannot be added, deleted, or reordered. A bar's color follows its milestones, from near black when nothing is done, through blue while work is underway, to green when every milestone is done. A mark beside the title — fire, a melting face, or a shrug — shows how the team reads that capability. Open a bar to write the subtitle and the longer description, pick its era, and add, edit, check off, or delete milestones. Sign in with email and password. An invite link joins that campaign after sign-in, and only members can open or edit it.
 
 ## Run it locally
 
@@ -77,7 +77,8 @@ meridian eras rename --campaign <id> (--id <era-id> | --era <id-or-name>) --name
 - Drag from the dot on one bar and drop it on another bar to draw what it leads to
 - Open a bar to add or remove those links from the Leads to and Comes from lists
 - Select a link on the board and remove it
-- Drag a bar into another era column to move it there. Rename a plaque, add an era, or shift one left or right
+- Drag a bar into another era column to move it there. Rename a plaque. The four eras stay put
+- Add technology on a column creates a bar in that era. Add technology in the header asks which era first
 - Create a campaign, reopen it from the list, and invite teammates with a hosted link
 - Export HTML downloads one file of the open campaign. The CLI writes the same file with `campaigns export`
 - Sign in, or create an account, before the list or a tree will open

@@ -10,12 +10,17 @@ export type EraData = {
   numeral: string;
   title: string;
   hot: boolean;
-  first: boolean;
-  last: boolean;
 };
 
 export type EraFlowNode = Node<EraData, "era">;
 export type RuleFlowNode = Node<Record<string, never>, "rule">;
+
+export type AddTechData = {
+  eraId: string;
+  eraName: string;
+};
+
+export type AddTechFlowNode = Node<AddTechData, "add">;
 
 export function EraBand({ data }: NodeProps<EraFlowNode>) {
   const chrome = useBoardChrome();
@@ -34,15 +39,6 @@ export function EraBand({ data }: NodeProps<EraFlowNode>) {
 
   return (
     <div className={`era-plaque nodrag nopan ${data.hot ? "era-plaque-hot" : ""}`}>
-      <button
-        type="button"
-        className="era-shift"
-        aria-label="Move era earlier"
-        disabled={data.first}
-        onClick={() => chrome.shiftEra(data.eraId, -1)}
-      >
-        ‹
-      </button>
       {editing ? (
         <input
           className="era-rename"
@@ -71,21 +67,34 @@ export function EraBand({ data }: NodeProps<EraFlowNode>) {
           </span>
         </button>
       )}
-      <button
-        type="button"
-        className="era-shift"
-        aria-label="Move era later"
-        disabled={data.last}
-        onClick={() => chrome.shiftEra(data.eraId, 1)}
-      >
-        ›
-      </button>
-      {data.last ? (
-        <button type="button" className="era-add" aria-label="Add an era" onClick={() => chrome.addEra()}>
-          +
-        </button>
-      ) : null}
     </div>
+  );
+}
+
+export function AddTechNode({ data }: NodeProps<AddTechFlowNode>) {
+  const chrome = useBoardChrome();
+  return (
+    <button
+      type="button"
+      className="nodrag nopan"
+      data-testid="add-technology"
+      data-era-name={data.eraName}
+      aria-label={`Add technology in ${data.eraName}`}
+      style={{
+        width: "100%",
+        height: 40,
+        border: "1px dashed rgba(231, 201, 138, 0.8)",
+        borderRadius: 8,
+        background: "rgba(16, 36, 58, 0.92)",
+        color: "#f3e2b3",
+        fontSize: 14,
+        fontWeight: 650,
+        cursor: "pointer",
+      }}
+      onClick={() => chrome.addTechnology(data.eraId)}
+    >
+      Add technology
+    </button>
   );
 }
 

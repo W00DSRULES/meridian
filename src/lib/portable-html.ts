@@ -283,6 +283,24 @@ h1 {
   cursor: pointer;
 }
 .form-error { color: #f0b0a0; font-size: 13px; }
+.actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.add-tech {
+  position: absolute;
+  width: 308px;
+  height: 40px;
+  border: 1px dashed rgba(231, 201, 138, 0.8);
+  border-radius: 8px;
+  background: rgba(16, 36, 58, 0.92);
+  color: #f3e2b3;
+  font-weight: 650;
+  cursor: pointer;
+}
+.era-pick {
+  display: block;
+  width: 100%;
+  margin-top: 8px;
+  text-align: left;
+}
 noscript p {
   margin: 16px 20px;
   color: #f4efe6;
@@ -432,6 +450,9 @@ function renderBoard() {
     width = Math.max(width, tech.x + COL_W + 24);
     height = Math.max(height, tech.y + 72);
   });
+  eras.forEach(function (era) {
+    height = Math.max(height, nextSlotY(era.id) + 64);
+  });
   stage.style.width = width + "px";
   stage.style.height = height + "px";
   var svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
@@ -496,6 +517,82 @@ function renderBoard() {
     });
     stage.append(bar);
   });
+  eras.forEach(function (era, index) {
+    var button = document.createElement("button");
+    button.type = "button";
+    button.className = "add-tech";
+    button.dataset.testid = "portable-add-technology";
+    button.dataset.era = era.name;
+    button.textContent = "Add technology";
+    button.style.left = columnLeft(index) + "px";
+    button.style.top = nextSlotY(era.id) + "px";
+    button.addEventListener("click", function () { addTech(era.id); });
+    stage.append(button);
+  });
+}
+function nextSlotY(eraId) {
+  var y = 56;
+  var found = false;
+  state.techs.forEach(function (tech) {
+    if (tech.eraId !== eraId) return;
+    found = true;
+    y = Math.max(y, tech.y + 56);
+  });
+  return found ? y : 56;
+}
+function addTech(eraId) {
+  var eras = sortedEras();
+  var index = 0;
+  for (var i = 0; i < eras.length; i += 1) if (eras[i].id === eraId) index = i;
+  var names = ["compass", "quill", "lantern", "lens", "sprout", "beacon", "keystone", "anchor"];
+  state.techs.push({
+    id: freshId(),
+    title: "New technology",
+    description: "",
+    detail: "",
+    glyph: names[state.techs.length % names.length],
+    proficiency: "neutral",
+    eraId: eraId,
+    x: columnLeft(index),
+    y: nextSlotY(eraId),
+    milestones: []
+  });
+  selectedId = state.techs[state.techs.length - 1].id;
+  renderShell();
+}
+function askEra() {
+  selectedId = null;
+  renderBoard();
+  var host = document.getElementById("panel");
+  host.hidden = false;
+  host.replaceChildren();
+  var shade = document.createElement("div");
+  shade.className = "shade";
+  shade.addEventListener("click", function () {
+    host.hidden = true;
+    host.replaceChildren();
+  });
+  var panel = document.createElement("aside");
+  panel.className = "panel";
+  panel.dataset.testid = "portable-which-era";
+  panel.setAttribute("role", "dialog");
+  panel.setAttribute("aria-label", "Which era?");
+  var heading = document.createElement("h2");
+  heading.textContent = "Which era?";
+  var note = document.createElement("p");
+  note.className = "hint";
+  note.textContent = "The new technology is added to the column you pick. Then edit it here.";
+  panel.append(heading, note);
+  sortedEras().forEach(function (era) {
+    var button = document.createElement("button");
+    button.type = "button";
+    button.className = "add era-pick";
+    button.dataset.testid = "portable-era-pick";
+    button.textContent = era.name;
+    button.addEventListener("click", function () { addTech(era.id); });
+    panel.append(button);
+  });
+  host.append(shade, panel);
 }
 function field(labelText, control) {
   var label = document.createElement("label");
@@ -748,7 +845,16 @@ function renderShell() {
   download.dataset.testid = "download-updated";
   download.textContent = "Download updated file";
   download.addEventListener("click", downloadCopy);
-  top.append(copy, download);
+  var addHeader = document.createElement("button");
+  addHeader.type = "button";
+  addHeader.className = "download";
+  addHeader.dataset.testid = "portable-add-header";
+  addHeader.textContent = "Add technology";
+  addHeader.addEventListener("click", askEra);
+  var actions = document.createElement("div");
+  actions.className = "actions";
+  actions.append(addHeader, download);
+  top.append(copy, actions);
   var progress = document.createElement("div");
   progress.id = "progress";
   progress.className = "progress";

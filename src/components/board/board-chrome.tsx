@@ -9,11 +9,9 @@ export const BoardChrome = createContext({
     void _id;
     void _name;
   },
-  shiftEra: (_id: string, _direction: -1 | 1) => {
-    void _id;
-    void _direction;
+  addTechnology: (_eraId: string) => {
+    void _eraId;
   },
-  addEra: () => {},
 });
 
 export function useBoardChrome() {
