@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 const HELP = `Meridian CLI
@@ -12,6 +12,7 @@ Usage
   meridian --help
   meridian campaigns list
   meridian campaigns create --name <name> [--author <name>]
+  meridian campaigns export --campaign <id> --out <file.html>
   meridian tree dump --campaign <id>
   meridian techs create --campaign <id> --title <title> [--description <text>] [--detail <text>] [--glyph <glyph>] [--proficiency good|bad|neutral] [--commitment doing|not_doing|next] [--era <id-or-name>] [--author <name>]
   meridian techs update --campaign <id> --id <tech-id> [--title <title>] [--description <text>] [--detail <text>] [--glyph <glyph>] [--proficiency good|bad|neutral] [--commitment doing|not_doing|next] [--era <id-or-name>] [--author <name>]
@@ -28,6 +29,11 @@ Defaults
   techs create uses proficiency neutral and commitment next when omitted.
   milestones add uses --done false when omitted.
 
+Export
+  campaigns export writes one HTML file for that campaign. Open the file in a browser.
+  It embeds the eras, techs, milestones, and links. It has no server and no secrets.
+  Edits stay in the file. Download updated file saves a new copy. It does not sync back.
+
 Environment
   SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY from the environment or .env.local.
   The service role key stays in this process. It is never printed.
@@ -42,6 +48,7 @@ JSON
 const COMMANDS = {
   "campaigns list": [],
   "campaigns create": ["name", "author"],
+  "campaigns export": ["campaign", "out"],
   "tree dump": ["campaign"],
   "techs create": [
     "campaign",
@@ -289,6 +296,20 @@ async function dispatch(db, command, flags, json) {
     const name = requiredString(flags, json, "name <name>", "name");
     const campaign = await db.createCampaign({ name, author: authorOf(flags, json) });
     emit({ campaign });
+  }
+
+  if (command === "campaigns export") {
+    const campaign = campaignOf(flags, json);
+    const out = requiredString(flags, json, "out <file.html>", "out");
+    const html = await import("../src/lib/portable-html.ts");
+    const portable = html.toPortableCampaign(await db.readBoard(campaign));
+    try {
+      writeFileSync(out, html.renderPortableHtml(portable));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Couldn't write that file.";
+      finish(false, message, 1);
+    }
+    emit({ out, campaign: { id: portable.id, name: portable.name } });
   }
 
   if (command === "tree dump") {

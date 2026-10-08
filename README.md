@@ -50,6 +50,7 @@ Stdout is one JSON object, except `--help`, which prints the text below. Pass fl
 ```text
 meridian campaigns list
 meridian campaigns create --name <name> [--author <name>]
+meridian campaigns export --campaign <id> --out <file.html>
 meridian tree dump --campaign <id>
 meridian techs create --campaign <id> --title <title> [--description <text>] [--detail <text>] [--glyph <glyph>] [--proficiency good|bad|neutral] [--commitment doing|not_doing|next] [--era <id-or-name>] [--author <name>]
 meridian techs update --campaign <id> --id <tech-id> [--title <title>] [--description <text>] [--detail <text>] [--glyph <glyph>] [--proficiency good|bad|neutral] [--commitment doing|not_doing|next] [--era <id-or-name>] [--author <name>]
@@ -66,6 +67,8 @@ meridian eras rename --campaign <id> (--id <era-id> | --era <id-or-name>) --name
 
 `techs create` accepts a `milestones` array on stdin, each item `{ "name", "done" }`.
 
+`campaigns export` writes one self-contained HTML file. Open that file in a browser. It does not need this repo, a server, or a network call. The file embeds that campaign’s eras, techs, milestones, and links, and it does not include secrets. On the campaign page, Export HTML downloads the same kind of file. Inside the file, change the title, subtitle, description, proficiency, and milestones. Download updated file saves a new HTML file with those edits embedded. The page says this is a copy and it does not sync back.
+
 ## What you can do
 
 - Add, edit, and remove capability cards
@@ -76,6 +79,7 @@ meridian eras rename --campaign <id> (--id <era-id> | --era <id-or-name>) --name
 - Select a link on the board and remove it
 - Drag a bar into another era column to move it there. Rename a plaque, add an era, or shift one left or right
 - Create a campaign, reopen it from the list, and invite teammates with a hosted link
+- Export HTML downloads one file of the open campaign. The CLI writes the same file with `campaigns export`
 - Sign in, or create an account, before the list or a tree will open
 
 ## Limits

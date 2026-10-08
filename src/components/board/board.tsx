@@ -423,6 +423,31 @@ function BoardCanvas({ campaignId }: { campaignId: string }) {
     setSession("guest");
   }
 
+  async function exportCopy() {
+    try {
+      const response = await fetch(`/api/campaigns/export?campaign=${encodeURIComponent(campaignId)}`);
+      if (!response.ok) {
+        const body = (await response.json().catch(() => null)) as { error?: string } | null;
+        note(body?.error || "Couldn't export this campaign.");
+        return;
+      }
+      const blob = await response.blob();
+      const header = response.headers.get("Content-Disposition") ?? "";
+      const matched = /filename="([^"]+)"/.exec(header);
+      const filename = matched?.[1] || "campaign.html";
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = filename;
+      document.body.append(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(url);
+    } catch {
+      note("Couldn't export this campaign.");
+    }
+  }
+
   function note(message: string) {
     setBanner(message);
     window.setTimeout(() => {
@@ -832,6 +857,15 @@ function BoardCanvas({ campaignId }: { campaignId: string }) {
               onClick={() => void signOut()}
             >
               Sign out
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="border-[#e0c088]/30 bg-[#0c1a2c]"
+              data-testid="export-campaign"
+              onClick={() => void exportCopy()}
+            >
+              Export HTML
             </Button>
             <Button
               variant="outline"
