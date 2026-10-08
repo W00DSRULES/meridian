@@ -2,7 +2,17 @@
 
 Meridian is a shared capability tree. A campaign is one saved tech tree that several people edit together. Sales, dev, and engineering use it to see what is connected, how far the milestones have come, and what the team is ready to do next.
 
-The board is drawn like a strategy-game tech tree: era columns left to right. Every tree has exactly four eras, named MVP, Traction, Scale, and Horizon until someone renames a plaque. Eras cannot be added, deleted, or reordered. A bar's color follows its milestones, from near black when nothing is done, through blue while work is underway, to green when every milestone is done. A mark beside the title — fire, a melting face, or a shrug — shows how the team reads that capability. Open a bar to write the subtitle and the longer description, pick its era, and add, edit, check off, or delete milestones. Sign in with email and password. An invite link joins that campaign after sign-in, and only members can open or edit it.
+The board is drawn like a strategy-game tech tree: era columns left to right. Every tree has exactly four eras, named MVP, Traction, Scale, and Horizon until someone renames a plaque. Eras cannot be added, deleted, or reordered. A bar's color follows its milestones, from near black when nothing is done, through blue while work is underway, to green when every milestone is done. A mark beside the title — fire, a melting face, or a shrug — shows how the team reads that capability. Open a bar to write the subtitle and the longer description, move it to another era, delete the technology, and add, edit, check off, or delete milestones. Sign in with email and password. An invite link joins that campaign after sign-in, and only members can open or edit it.
+
+## What it looks like
+
+The tree is four era columns. Add technology sits under the bars in a column. Open a bar and Move to era plus Delete technology are at the top of that panel.
+
+![Example tree with era columns and technology bars](docs/images/tree.png)
+
+![Add technology under the MVP column](docs/images/add-technology.png)
+
+![Open technology with Move to era and Delete technology](docs/images/open-technology.png)
 
 ## Run it locally
 
@@ -67,12 +77,12 @@ meridian eras rename --campaign <id> (--id <era-id> | --era <id-or-name>) --name
 
 `techs create` accepts a `milestones` array on stdin, each item `{ "name", "done" }`.
 
-`campaigns export` writes one self-contained HTML file. Open that file in a browser. It does not need this repo, a server, or a network call. The file embeds that campaign’s eras, techs, milestones, and links, and it does not include secrets. On the campaign page, Export HTML downloads the same kind of file. Inside the file, change the title, subtitle, description, proficiency, and milestones. Download updated file saves a new HTML file with those edits embedded. The page says this is a copy and it does not sync back.
+`campaigns export` writes one self-contained HTML file. Open that file in a browser. It does not need this repo, a server, or a network call. The file embeds that campaign’s eras, techs, milestones, and links, and it does not include secrets. On the campaign page, Export HTML downloads the same kind of file. Inside the file, change the title, subtitle, description, proficiency, and milestones. Move to era and Delete technology work there too. Download updated file saves a new HTML file with those edits embedded. The page says this is a copy and it does not sync back.
 
 ## What you can do
 
-- Add, edit, and remove capability cards
-- Open a bar to edit the subtitle, the longer description, commitment, and which era it sits in. The mark beside the title is how the team reads it
+- Add, edit, and delete technologies. Open a bar and use Delete technology
+- Open a bar and click another era under Move to era. The bar moves into that column. Dragging a bar into another column does the same
 - Add, rename, check off, and delete milestones. The card shows completed/total, and the progress bar counts the whole tree
 - Drag from the dot on one bar and drop it on another bar to draw what it leads to
 - Open a bar to add or remove those links from the Leads to and Comes from lists
@@ -89,5 +99,5 @@ meridian eras rename --campaign <id> (--id <era-id> | --era <id-or-name>) --name
 - Only members can open and edit a campaign. The person who creates it is a member
 - Saving a card sends the campaign revision. If that card changed since then, the save returns 409 and the draft stays put. A different card can still be saved
 - The CLI is an admin path on the service role and can edit without being a member
-- Up to 300 capabilities, 600 links, 12 milestones on a card, and 8 eras
+- Up to 300 capabilities, 600 links, and 12 milestones on a card. Every tree has four eras
 - The display name is whatever the browser sends; the account is the email they signed in with

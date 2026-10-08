@@ -413,6 +413,51 @@ export function CapabilityDialog({
               />
             </div>
           </div>
+          <fieldset
+            className="grid gap-2 rounded-lg border border-[#e7c98a]/50 bg-[#0b1626] p-3"
+            data-testid="era-choice"
+          >
+            <legend className="px-1 text-sm font-semibold text-[#f3e2b3]">
+              {mode === "edit" ? "Move to era" : "Era"}
+            </legend>
+            {mode === "edit" ? (
+              <p className="text-sm text-[#d5deea]">Click an era. The bar moves into that column.</p>
+            ) : (
+              <p className="text-sm text-[#d5deea]">This technology starts in the era you pick.</p>
+            )}
+            <div className="grid grid-cols-2 gap-2">
+              {eras.map((era) => {
+                const selected = (mode === "edit" ? eraId : draft.eraId || eras[0]?.id) === era.id;
+                return (
+                  <button
+                    key={era.id}
+                    type="button"
+                    aria-pressed={selected}
+                    className="tech-choice"
+                    data-testid="era-option"
+                    data-era-name={era.name}
+                    data-selected={selected ? "true" : "false"}
+                    disabled={busyId === "era"}
+                    style={{ minHeight: 44, fontSize: 16, fontWeight: 700 }}
+                    onClick={() => void pickEra(era.id)}
+                  >
+                    {era.name}
+                  </button>
+                );
+              })}
+            </div>
+          </fieldset>
+          {mode === "edit" && onDelete ? (
+            <Button
+              type="button"
+              variant="destructive"
+              data-testid="delete-technology"
+              disabled={saving}
+              onClick={onDelete}
+            >
+              Delete technology
+            </Button>
+          ) : null}
           <div className="grid gap-1">
             <div className="flex items-center justify-between gap-2">
               <Label htmlFor="capability-subtitle" className="text-[10px] tracking-[0.18em] text-[#e0c088] uppercase">
@@ -496,29 +541,6 @@ export function CapabilityDialog({
               </button>
             ))}
           </div>
-          <fieldset className="grid gap-2" data-testid="era-choice">
-            <legend className="text-[10px] font-semibold tracking-[0.18em] text-[#e0c088] uppercase">
-              Era
-            </legend>
-            <div className="flex flex-wrap gap-2">
-              {eras.map((era) => {
-                const selected = (mode === "edit" ? eraId : draft.eraId || eras[0]?.id) === era.id;
-                return (
-                  <button
-                    key={era.id}
-                    type="button"
-                    aria-pressed={selected}
-                    className="tech-choice"
-                    data-selected={selected ? "true" : "false"}
-                    disabled={busyId === "era"}
-                    onClick={() => void pickEra(era.id)}
-                  >
-                    {era.name}
-                  </button>
-                );
-              })}
-            </div>
-          </fieldset>
           <fieldset className="grid gap-2">
             <legend className="text-[10px] font-semibold tracking-[0.18em] text-[#e0c088] uppercase">
               Commitment
@@ -725,14 +747,7 @@ export function CapabilityDialog({
             </div>
           ) : null}
           <p className="text-xs text-[#8ea0b5]">Stamped as {author || "you"} when you save.</p>
-          <DialogFooter className="sm:justify-between">
-            {mode === "edit" && onDelete ? (
-              <Button type="button" variant="destructive" disabled={saving} onClick={onDelete}>
-                Remove card
-              </Button>
-            ) : (
-              <span />
-            )}
+          <DialogFooter className="sm:justify-end">
             <div className="flex gap-2">
               <Button type="button" variant="outline" disabled={saving} onClick={() => onOpenChange(false)}>
                 Close

@@ -1164,7 +1164,7 @@ function BoardCanvas({ campaignId }: { campaignId: string }) {
       <AlertDialog open={Boolean(deleteTarget)} onOpenChange={(open) => !open && setPendingDelete(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Remove this capability?</AlertDialogTitle>
+            <AlertDialogTitle>Delete this technology?</AlertDialogTitle>
             <AlertDialogDescription>
               “{deleteTarget?.title}” leaves the shared board, and any links to it go with it.
               Everyone else will see it disappear within a few seconds.
@@ -1172,8 +1172,8 @@ function BoardCanvas({ campaignId }: { campaignId: string }) {
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Keep it</AlertDialogCancel>
-            <AlertDialogAction variant="destructive" onClick={() => void confirmDelete()}>
-              Remove
+            <AlertDialogAction variant="destructive" data-testid="confirm-delete-technology" onClick={() => void confirmDelete()}>
+              Delete technology
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

@@ -147,7 +147,8 @@ h1 {
   box-shadow: inset 0 0 14px var(--wash), 0 0 12px var(--glow);
   padding: 0 8px 0 5px;
   text-align: left;
-  cursor: pointer;
+  cursor: grab;
+  touch-action: none;
 }
 .bar[data-open="true"] {
   box-shadow: 0 0 0 1px var(--ink), inset 0 0 18px var(--wash), 0 0 22px var(--glow);
@@ -300,6 +301,36 @@ h1 {
   width: 100%;
   margin-top: 8px;
   text-align: left;
+}
+.era-move {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.era-move button {
+  min-height: 44px;
+  border: 1px solid rgba(231, 201, 138, 0.35);
+  border-radius: 8px;
+  background: #0b1626;
+  color: #f6f0e6;
+  font-size: 16px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.era-move button[data-selected="true"] {
+  border-color: #e7c98a;
+  background: rgba(231, 201, 138, 0.16);
+}
+.delete-tech {
+  width: 100%;
+  margin-top: 8px;
+  border: 0;
+  border-radius: 8px;
+  background: #9a3b32;
+  color: #fff6f2;
+  padding: 10px 12px;
+  font-weight: 700;
+  cursor: pointer;
 }
 noscript p {
   margin: 16px 20px;
@@ -510,7 +541,55 @@ function renderBoard() {
     bar.innerHTML = '<span class="medallion"></span><span class="title"><span class="title-text"></span><span class="mark"></span></span><ul class="pips"></ul><span class="fraction"></span>';
     bar.querySelector(".medallion").innerHTML = glyphSvg(tech.glyph);
     applyPaint(bar, tech);
-    bar.addEventListener("click", function () {
+    var pointer = { id: 0, x: 0, y: 0, ox: tech.x, oy: tech.y, moved: false, active: false };
+    bar.addEventListener("pointerdown", function (event) {
+      if (event.button !== undefined && event.button !== 0) return;
+      pointer.id = event.pointerId;
+      pointer.x = event.clientX;
+      pointer.y = event.clientY;
+      pointer.ox = tech.x;
+      pointer.oy = tech.y;
+      pointer.moved = false;
+      pointer.active = true;
+    });
+    bar.addEventListener("pointermove", function (event) {
+      if (!pointer.active || event.pointerId !== pointer.id) return;
+      var dx = event.clientX - pointer.x;
+      var dy = event.clientY - pointer.y;
+      if (!pointer.moved && Math.abs(dx) + Math.abs(dy) < 6) return;
+      if (!pointer.moved) {
+        pointer.moved = true;
+        try { bar.setPointerCapture(event.pointerId); } catch (err) { /* already captured */ }
+      }
+      bar.style.left = (pointer.ox + dx) + "px";
+      bar.style.top = Math.max(56, pointer.oy + dy) + "px";
+      bar.style.zIndex = "4";
+    });
+    function finishDrag(event) {
+      if (!pointer.active || event.pointerId !== pointer.id) return;
+      pointer.active = false;
+      if (!pointer.moved) return;
+      var dropX = pointer.ox + (event.clientX - pointer.x);
+      var list = sortedEras();
+      var index = 0;
+      var best = Infinity;
+      for (var i = 0; i < list.length; i += 1) {
+        var dist = Math.abs(columnLeft(i) - dropX);
+        if (dist < best) {
+          best = dist;
+          index = i;
+        }
+      }
+      moveTech(tech, list[index].id);
+    }
+    bar.addEventListener("pointerup", finishDrag);
+    bar.addEventListener("pointercancel", finishDrag);
+    bar.addEventListener("click", function (event) {
+      if (pointer.moved) {
+        pointer.moved = false;
+        event.preventDefault();
+        return;
+      }
       selectedId = tech.id;
       renderBoard();
       renderPanel();
@@ -593,6 +672,35 @@ function askEra() {
     panel.append(button);
   });
   host.append(shade, panel);
+}
+function moveTech(tech, eraId) {
+  var eras = sortedEras();
+  var index = 0;
+  for (var i = 0; i < eras.length; i += 1) if (eras[i].id === eraId) index = i;
+  if (tech.eraId === eraId) {
+    tech.x = columnLeft(index);
+    renderBoard();
+    if (selectedId) renderPanel();
+    return;
+  }
+  var y = 56;
+  var found = false;
+  state.techs.forEach(function (other) {
+    if (other.id === tech.id || other.eraId !== eraId) return;
+    found = true;
+    y = Math.max(y, other.y + 56);
+  });
+  tech.eraId = eraId;
+  tech.x = columnLeft(index);
+  tech.y = found ? y : 56;
+  renderBoard();
+  renderPanel();
+}
+function deleteTech(tech) {
+  state.techs = state.techs.filter(function (item) { return item.id !== tech.id; });
+  state.links = state.links.filter(function (link) { return link.source !== tech.id && link.target !== tech.id; });
+  selectedId = null;
+  renderShell();
 }
 function field(labelText, control) {
   var label = document.createElement("label");
@@ -780,11 +888,38 @@ function renderPanel() {
     empty.textContent = "This bar does not lead anywhere yet.";
     leads = empty;
   }
+  var move = document.createElement("div");
+  var moveLabel = document.createElement("p");
+  moveLabel.className = "caption";
+  moveLabel.textContent = "Move to era. Click an era and the bar moves into that column.";
+  var moveRow = document.createElement("div");
+  moveRow.className = "era-move";
+  moveRow.dataset.testid = "portable-move-era";
+  sortedEras().forEach(function (era) {
+    var button = document.createElement("button");
+    button.type = "button";
+    button.dataset.testid = "portable-era-option";
+    button.dataset.era = era.name;
+    button.dataset.selected = tech.eraId === era.id ? "true" : "false";
+    button.setAttribute("aria-pressed", tech.eraId === era.id ? "true" : "false");
+    button.textContent = era.name;
+    button.addEventListener("click", function () { moveTech(tech, era.id); });
+    moveRow.append(button);
+  });
+  move.append(moveLabel, moveRow);
+  var removeTech = document.createElement("button");
+  removeTech.type = "button";
+  removeTech.className = "delete-tech";
+  removeTech.dataset.testid = "portable-delete";
+  removeTech.textContent = "Delete technology";
+  removeTech.addEventListener("click", function () { deleteTech(tech); });
   panel.append(
     close,
     heading,
     error,
     field("Title", title),
+    move,
+    removeTech,
     field("Subtitle", subtitle),
     field("Description", detail),
     field("Proficiency", emojiRow),
